@@ -171,16 +171,15 @@ function Shop({ settings }) {
           <h1>{settings?.shop_name || 'Моят магазин'}</h1>
           {settings?.tagline && <p className="tagline">{settings.tagline}</p>}
         </div>
-        <div className="shop-header-actions">
-          <a className="admin-link-btn" href="#admin" title="Администрация" aria-label="Администрация">
-            <Settings size={18} />
-          </a>
-          <button className="cart-btn" onClick={() => setDrawerOpen(true)}>
-            <ShoppingCart size={20} />
-            <span>{cartCount}</span>
-          </button>
-        </div>
+        <button className="cart-btn" onClick={() => setDrawerOpen(true)}>
+          <ShoppingCart size={20} />
+          <span>{cartCount}</span>
+        </button>
       </header>
+
+      <a className="admin-fab" href="#admin" title="Администрация" aria-label="Администрация">
+        <Settings size={20} />
+      </a>
 
       {categories.length > 1 && (
         <div className="categories">
@@ -830,8 +829,6 @@ function Style() {
       .shop-header h1 { margin: 0; font-size: 1.8rem; }
       .shop-header .tagline { margin: 4px 0 0; color: var(--muted); }
 
-      .shop-header-actions { display: flex; align-items: center; gap: 10px; }
-
       .cart-btn {
         display: flex;
         align-items: center;
@@ -843,18 +840,23 @@ function Style() {
         font-weight: 600;
       }
 
-      .admin-link-btn {
+      .admin-fab {
+        position: fixed;
+        left: 20px;
+        bottom: 20px;
+        z-index: 50;
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 40px;
-        height: 40px;
+        width: 48px;
+        height: 48px;
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 999px;
         color: var(--muted);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
       }
-      .admin-link-btn:hover { color: var(--accent); border-color: var(--accent); }
+      .admin-fab:hover { color: var(--accent); border-color: var(--accent); }
 
       .categories { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
       .chip {
