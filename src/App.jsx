@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Pencil, Plus, ShoppingCart, Trash2, X } from 'lucide-react'
+import { Pencil, Plus, Settings, ShoppingCart, Trash2, X } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Supabase (директен REST достъп, без @supabase/supabase-js)
@@ -171,10 +171,15 @@ function Shop({ settings }) {
           <h1>{settings?.shop_name || 'Моят магазин'}</h1>
           {settings?.tagline && <p className="tagline">{settings.tagline}</p>}
         </div>
-        <button className="cart-btn" onClick={() => setDrawerOpen(true)}>
-          <ShoppingCart size={20} />
-          <span>{cartCount}</span>
-        </button>
+        <div className="shop-header-actions">
+          <a className="admin-link-btn" href="#admin" title="Администрация" aria-label="Администрация">
+            <Settings size={18} />
+          </a>
+          <button className="cart-btn" onClick={() => setDrawerOpen(true)}>
+            <ShoppingCart size={20} />
+            <span>{cartCount}</span>
+          </button>
+        </div>
       </header>
 
       {categories.length > 1 && (
@@ -825,6 +830,8 @@ function Style() {
       .shop-header h1 { margin: 0; font-size: 1.8rem; }
       .shop-header .tagline { margin: 4px 0 0; color: var(--muted); }
 
+      .shop-header-actions { display: flex; align-items: center; gap: 10px; }
+
       .cart-btn {
         display: flex;
         align-items: center;
@@ -835,6 +842,19 @@ function Style() {
         padding: 10px 16px;
         font-weight: 600;
       }
+
+      .admin-link-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        color: var(--muted);
+      }
+      .admin-link-btn:hover { color: var(--accent); border-color: var(--accent); }
 
       .categories { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
       .chip {
