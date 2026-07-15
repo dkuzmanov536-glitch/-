@@ -142,6 +142,7 @@ function Shop({ settings }) {
   })
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [selected, setSelected] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -232,7 +233,7 @@ function Shop({ settings }) {
       ) : (
         <div className="product-grid">
           {filtered.map((p) => (
-            <div className="product-card" key={p.id}>
+            <div className="product-card" key={p.id} onClick={() => setSelected(p)} role="button" tabIndex={0}>
               <div className="product-image">
                 {isUrl(p.image) ? <img src={p.image} alt={p.name} /> : <span className="emoji">{p.image || '📦'}</span>}
               </div>
@@ -240,7 +241,13 @@ function Shop({ settings }) {
               {p.description && <p className="desc">{p.description}</p>}
               <div className="product-footer">
                 <strong>{money(p.price, currency)}</strong>
-                <button disabled={p.stock <= 0} onClick={() => addToCart(p)}>
+                <button
+                  disabled={p.stock <= 0}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    addToCart(p)
+                  }}
+                >
                   {p.stock <= 0 ? 'Изчерпан' : 'Добави'}
                 </button>
               </div>
@@ -288,6 +295,36 @@ function Shop({ settings }) {
 
       <Modal open={checkoutOpen} onClose={() => setCheckoutOpen(false)} title="Завършване на поръчката">
         <Checkout cart={cart} total={total} currency={currency} onComplete={handleOrderComplete} />
+      </Modal>
+
+      <Modal open={!!selected} onClose={() => setSelected(null)} title={selected?.name || ''}>
+        {selected && (
+          <div className="product-detail">
+            <div className="product-detail-image">
+              {isUrl(selected.image) ? (
+                <img src={selected.image} alt={selected.name} />
+              ) : (
+                <span className="emoji">{selected.image || '📦'}</span>
+              )}
+            </div>
+            {selected.category && <span className="product-detail-category">{selected.category}</span>}
+            <div className="product-detail-price">{money(selected.price, currency)}</div>
+            <p className={selected.stock > 0 ? 'product-detail-stock' : 'product-detail-stock out'}>
+              {selected.stock > 0 ? `Налични: ${selected.stock} бр.` : 'Изчерпан'}
+            </p>
+            {selected.description && <p className="product-detail-desc">{selected.description}</p>}
+            <button
+              className="primary"
+              disabled={selected.stock <= 0}
+              onClick={() => {
+                addToCart(selected)
+                setSelected(null)
+              }}
+            >
+              {selected.stock <= 0 ? 'Изчерпан' : 'Добави в количката'}
+            </button>
+          </div>
+        )}
       </Modal>
 
       <footer className="shop-footer">
@@ -974,7 +1011,37 @@ function Style() {
         padding: 16px;
         display: flex;
         flex-direction: column;
+        cursor: pointer;
+        transition: box-shadow 0.15s, transform 0.15s;
       }
+      .product-card:hover { box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1); transform: translateY(-2px); }
+
+      .product-detail { display: flex; flex-direction: column; gap: 10px; }
+      .product-detail-image {
+        height: 220px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg);
+        border-radius: var(--radius);
+        overflow: hidden;
+      }
+      .product-detail-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
+      .product-detail-image .emoji { font-size: 5rem; }
+      .product-detail-category {
+        align-self: flex-start;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 3px 12px;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .product-detail-price { font-size: 1.5rem; font-weight: 700; }
+      .product-detail-stock { margin: 0; color: var(--muted); font-size: 0.9rem; }
+      .product-detail-stock.out { color: #dc2626; font-weight: 600; }
+      .product-detail-desc { margin: 4px 0; color: var(--text); line-height: 1.5; white-space: pre-wrap; }
+      .product-detail .primary { margin-top: 6px; }
       .product-image {
         height: 120px;
         display: flex;
