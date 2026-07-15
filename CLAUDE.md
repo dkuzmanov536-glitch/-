@@ -53,8 +53,12 @@ npm run preview # преглед на билда
 ### Таблици
 
 - `products` — id, name, price, category, image (емоджи или URL), stock, description, created_at
-- `orders` — id, created_at, customer_name/phone/city/address, notes, items (jsonb), total, currency, payment, status
+- `orders` — id, created_at, customer_name/phone/city/address, notes, items (jsonb), total, currency, payment, status,
+  `user_id` (акаунт на клиента, `default auth.uid()`; null за анонимни поръчки)
 - `shop_settings` — един ред (id=1): shop_name, tagline, currency
+
+Тригер `trg_decrement_stock` (функция `decrement_stock_on_order`, SECURITY DEFINER) намалява
+`products.stock` при всяка нова поръчка (заобикаля RLS, за да работи и при анонимни/клиентски поръчки).
 
 ### RLS правила (важно!)
 
@@ -92,7 +96,8 @@ npm run preview # преглед на билда
 2. ~~Качване на снимки на продукти (Supabase Storage).~~ **Готово.**
 3. Картови плащания (напр. Stripe) — сега е само наложен платеж.
 4. Имейл известие при нова поръчка.
-5. Свързване на поръчките с клиентския акаунт (история на поръчките в „Профил“).
+5. ~~Свързване на поръчките с клиентския акаунт (история в „Профил“).~~ **Готово** — клиентът вижда
+   своите поръчки в „Профил“ (с дата) и може да отказва поръчка, докато е със статус `нова`.
 
 ## Стил на кода
 

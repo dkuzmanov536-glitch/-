@@ -114,6 +114,20 @@ function isUrl(value) {
   return typeof value === 'string' && /^https?:\/\//.test(value)
 }
 
+function formatDate(iso) {
+  try {
+    return new Date(iso).toLocaleString('bg-BG', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return iso
+  }
+}
+
 function parseRoute() {
   const hash = window.location.hash
   if (hash === '#admin') return { name: 'admin' }
@@ -134,10 +148,14 @@ const updateProduct = (token, id, patch) =>
 const deleteProduct = (token, id) => rest(`products?id=eq.${id}`, { method: 'DELETE', token })
 
 const getOrders = (token) => rest('orders?select=*&order=created_at.desc', { token })
-const createOrder = (order) => rest('orders', { method: 'POST', body: order, headers: { Prefer: 'return=minimal' } })
+// При логнат клиент подаваме token — така поръчката се вързва към акаунта (user_id = auth.uid()).
+const createOrder = (order, token) => rest('orders', { method: 'POST', token, body: order, headers: { Prefer: 'return=minimal' } })
 const updateOrderStatus = (token, id, status) =>
   rest(`orders?id=eq.${id}`, { method: 'PATCH', token, body: { status }, headers: { Prefer: 'return=representation' } }).then((r) => r[0])
 const deleteOrder = (token, id) => rest(`orders?id=eq.${id}`, { method: 'DELETE', token })
+const getMyOrders = (token) => rest('orders?select=*&order=created_at.desc', { token })
+const cancelMyOrder = (token, id) =>
+  rest(`orders?id=eq.${id}`, { method: 'PATCH', token, body: { status: 'отказана' }, headers: { Prefer: 'return=representation' } })
 
 const getSettings = () => rest('shop_settings?select=*&id=eq.1').then((r) => r[0])
 const updateSettings = (token, patch) =>
@@ -265,9 +283,9 @@ export default function App() {
       {route.name === 'favorites' ? (
         <FavoritesPage settings={settings} addToCart={addToCart} {...favProps} />
       ) : route.name === 'cart' ? (
-        <CartPage settings={settings} {...cartProps} />
+        <CartPage settings={settings} customer={customer} {...cartProps} />
       ) : route.name === 'profile' ? (
-        <ProfilePage customer={customer} onAuth={handleCustomerAuth} onLogout={handleCustomerLogout} />
+        <ProfilePage settings={settings} customer={customer} onAuth={handleCustomerAuth} onLogout={handleCustomerLogout} />
       ) : route.name === 'product' ? (
         <ProductPage productId={route.id} settings={settings} addToCart={addToCart} {...favProps} />
       ) : (
@@ -478,7 +496,7 @@ function FavoritesPage({ settings, addToCart, favorites, toggleFavorite }) {
 // CartPage (Количка)
 // ---------------------------------------------------------------------------
 
-function CartPage({ settings, cart, changeQty, removeFromCart, clearCart }) {
+function CartPage({ settings, customer, cart, changeQty, removeFromCart, clearCart }) {
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const currency = settings?.currency || 'лв.'
   const total = cart.reduce((sum, i) => sum + i.price * i.qty, 0)
@@ -534,7 +552,7 @@ function CartPage({ settings, cart, changeQty, removeFromCart, clearCart }) {
       )}
 
       <Modal open={checkoutOpen} onClose={() => setCheckoutOpen(false)} title="Завършване на поръчката">
-        <Checkout cart={cart} total={total} currency={currency} onComplete={handleOrderComplete} />
+        <Checkout cart={cart} total={total} currency={currency} onComplete={handleOrderComplete} customerToken={customer?.token} />
       </Modal>
     </div>
   )
@@ -544,7 +562,7 @@ function CartPage({ settings, cart, changeQty, removeFromCart, clearCart }) {
 // ProfilePage (Профил — вход и регистрация за клиенти)
 // ---------------------------------------------------------------------------
 
-function ProfilePage({ customer, onAuth, onLogout }) {
+function ProfilePage({ settings, customer, onAuth, onLogout }) {
   if (customer) {
     return (
       <div className="shop">
@@ -560,6 +578,7 @@ function ProfilePage({ customer, onAuth, onLogout }) {
             Изход
           </button>
         </div>
+        <MyOrders token={customer.token} currency={settings?.currency} />
       </div>
     )
   }
@@ -640,6 +659,76 @@ function CustomerAuth({ onAuth }) {
           {loading ? 'Моля изчакай...' : mode === 'register' ? 'Регистрирай се' : 'Вход'}
         </button>
       </form>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// MyOrders (история на поръчките в Профил + отказване)
+// ---------------------------------------------------------------------------
+
+function MyOrders({ token, currency }) {
+  const [orders, setOrders] = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(null)
+
+  useEffect(() => {
+    let active = true
+    getMyOrders(token)
+      .then((o) => active && setOrders(o || []))
+      .catch(() => active && setError('Неуспешно зареждане на поръчките.'))
+    return () => {
+      active = false
+    }
+  }, [token])
+
+  async function cancel(id) {
+    if (!window.confirm('Сигурни ли сте, че искате да откажете тази поръчка?')) return
+    setBusy(id)
+    setError('')
+    try {
+      await cancelMyOrder(token, id)
+      setOrders((os) => os.map((o) => (o.id === id ? { ...o, status: 'отказана' } : o)))
+    } catch {
+      setError('Неуспешно отказване на поръчката.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="my-orders">
+      <h2>Моите поръчки</h2>
+      {error && <p className="error">{error}</p>}
+      {orders === null ? (
+        <p className="hint">Зареждане на поръчките...</p>
+      ) : orders.length === 0 ? (
+        <p className="hint">Още нямаш поръчки.</p>
+      ) : (
+        orders.map((o) => (
+          <div className="order-card" key={o.id}>
+            <div className="order-card-header">
+              <span className="order-date">{formatDate(o.created_at)}</span>
+              <span className={`status status-${statusClass(o.status)}`}>{o.status}</span>
+            </div>
+            <ul className="order-items">
+              {(o.items || []).map((it, idx) => (
+                <li key={idx}>
+                  {it.qty} × {it.name} — {money(it.price * it.qty, o.currency || currency)}
+                </li>
+              ))}
+            </ul>
+            <div className="order-card-footer">
+              <strong>Общо: {money(o.total, o.currency || currency)}</strong>
+              {o.status === 'нова' && (
+                <button className="order-cancel" disabled={busy === o.id} onClick={() => cancel(o.id)}>
+                  {busy === o.id ? 'Отказване...' : 'Откажи поръчката'}
+                </button>
+              )}
+            </div>
+          </div>
+        ))
+      )}
     </div>
   )
 }
@@ -1212,7 +1301,7 @@ function SettingsPanel({ token, settings, onChange }) {
 // Checkout
 // ---------------------------------------------------------------------------
 
-function Checkout({ cart, total, currency, onComplete }) {
+function Checkout({ cart, total, currency, onComplete, customerToken }) {
   const [form, setForm] = useState({ name: '', phone: '', city: '', address: '', notes: '' })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -1230,17 +1319,20 @@ function Checkout({ cart, total, currency, onComplete }) {
     setSubmitting(true)
     setError('')
     try {
-      await createOrder({
-        customer_name: form.name,
-        customer_phone: form.phone,
-        customer_city: form.city,
-        customer_address: form.address,
-        notes: form.notes || null,
-        items: cart.map((i) => ({ id: i.id, name: i.name, price: i.price, qty: i.qty })),
-        total,
-        currency,
-        payment: 'Наложен платеж',
-      })
+      await createOrder(
+        {
+          customer_name: form.name,
+          customer_phone: form.phone,
+          customer_city: form.city,
+          customer_address: form.address,
+          notes: form.notes || null,
+          items: cart.map((i) => ({ id: i.id, name: i.name, price: i.price, qty: i.qty })),
+          total,
+          currency,
+          payment: 'Наложен платеж',
+        },
+        customerToken,
+      )
       onComplete()
     } catch {
       setError('Възникна грешка при изпращане на поръчката. Опитайте отново.')
@@ -1784,6 +1876,20 @@ function Style() {
       .status-shipped { background: #fdf1cf; color: #93650a; }
       .status-done { background: #e1f0e3; color: #2f6b3e; }
       .status-cancelled { background: #f8e2df; color: var(--danger); }
+
+      .my-orders { max-width: 640px; margin: 24px auto 0; display: flex; flex-direction: column; gap: 12px; }
+      .my-orders h2 { margin: 0 0 4px; font-size: 1.2rem; }
+      .order-date { color: var(--muted); font-size: 0.85rem; }
+      .order-cancel {
+        background: var(--surface);
+        border: 1px solid var(--danger);
+        color: var(--danger);
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-weight: 600;
+        font-size: 0.85rem;
+      }
+      .order-cancel:disabled { opacity: 0.6; }
 
       @media (max-width: 640px) {
         .shop-header { flex-direction: column; }
