@@ -60,6 +60,7 @@ const getOrders = (token) => rest('orders?select=*&order=created_at.desc', { tok
 const createOrder = (order) => rest('orders', { method: 'POST', body: order, headers: { Prefer: 'return=minimal' } })
 const updateOrderStatus = (token, id, status) =>
   rest(`orders?id=eq.${id}`, { method: 'PATCH', token, body: { status }, headers: { Prefer: 'return=representation' } }).then((r) => r[0])
+const deleteOrder = (token, id) => rest(`orders?id=eq.${id}`, { method: 'DELETE', token })
 
 const getSettings = () => rest('shop_settings?select=*&id=eq.1').then((r) => r[0])
 const updateSettings = (token, patch) =>
@@ -384,6 +385,12 @@ function Orders({ token }) {
     setOrders((os) => os.map((o) => (o.id === id ? updated : o)))
   }
 
+  async function remove(id) {
+    if (!window.confirm('Сигурни ли сте, че искате да изтриете тази поръчка?')) return
+    await deleteOrder(token, id)
+    setOrders((os) => os.filter((o) => o.id !== id))
+  }
+
   if (loading) return <p className="hint">Зареждане...</p>
   if (error) return <p className="error">{error}</p>
   if (orders.length === 0) return <p className="hint">Все още няма поръчки.</p>
@@ -411,13 +418,18 @@ function Orders({ token }) {
           {o.notes && <p className="hint">Бележка: {o.notes}</p>}
           <div className="order-card-footer">
             <strong>Общо: {money(o.total, o.currency)}</strong>
-            <select value={o.status} onChange={(e) => changeStatus(o.id, e.target.value)}>
-              {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+            <div className="order-card-actions">
+              <select value={o.status} onChange={(e) => changeStatus(o.id, e.target.value)}>
+                {STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <button className="order-delete" onClick={() => remove(o.id)} title="Изтрий поръчката" aria-label="Изтрий поръчката">
+                <Trash2 size={16} />
+              </button>
+            </div>
           </div>
         </div>
       ))}
@@ -1075,6 +1087,19 @@ function Style() {
       .order-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
       .order-items { margin: 0 0 8px; padding-left: 18px; color: var(--text); }
       .order-card-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+      .order-card-actions { display: flex; align-items: center; gap: 8px; }
+      .order-delete {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--muted);
+      }
+      .order-delete:hover { color: #dc2626; border-color: #dc2626; }
 
       .status {
         font-size: 0.78rem;
