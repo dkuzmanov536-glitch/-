@@ -40,6 +40,25 @@ async function login(email, password) {
   return data
 }
 
+async function uploadProductImage(token, file) {
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+  const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/product-images/${path}`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': file.type || 'application/octet-stream',
+    },
+    body: file,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(text || `Грешка ${res.status}`)
+  }
+  return `${SUPABASE_URL}/storage/v1/object/public/product-images/${path}`
+}
+
 function money(n, currency = 'лв.') {
   const num = Number(n) || 0
   return `${num.toFixed(2)} ${currency}`
@@ -541,7 +560,7 @@ function ProductsAdmin({ token }) {
       )}
 
       <Modal open={!!editing} onClose={() => setEditing(null)} title={editing?.id ? 'Редакция на продукт' : 'Нов продукт'}>
-        {editing && <ProductForm product={editing} onSave={handleSave} onCancel={() => setEditing(null)} />}
+        {editing && <ProductForm product={editing} token={token} onSave={handleSave} onCancel={() => setEditing(null)} />}
       </Modal>
     </div>
   )
@@ -551,7 +570,7 @@ function ProductsAdmin({ token }) {
 // ProductForm
 // ---------------------------------------------------------------------------
 
-function ProductForm({ product, onSave, onCancel }) {
+function ProductForm({ product, token, onSave, onCancel }) {
   const [form, setForm] = useState({
     name: product.name || '',
     price: product.price ?? '',
@@ -561,10 +580,27 @@ function ProductForm({ product, onSave, onCancel }) {
     description: product.description || '',
   })
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
+  }
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    setError('')
+    try {
+      const url = await uploadProductImage(token, file)
+      update('image', url)
+    } catch {
+      setError('Неуспешно качване на снимката.')
+    } finally {
+      setUploading(false)
+      e.target.value = ''
+    }
   }
 
   async function submit(e) {
@@ -610,6 +646,13 @@ function ProductForm({ product, onSave, onCancel }) {
         Снимка (емоджи или URL)
         <input value={form.image} onChange={(e) => update('image', e.target.value)} placeholder="📦 или https://..." />
       </label>
+      <div className="image-upload">
+        <label className="upload-btn">
+          {uploading ? 'Качване...' : 'Качи снимка от устройство'}
+          <input type="file" accept="image/*" onChange={handleFile} disabled={uploading} hidden />
+        </label>
+        {isUrl(form.image) && <img className="image-preview" src={form.image} alt="Преглед" />}
+      </div>
       <label>
         Наличност
         <input type="number" min="0" value={form.stock} onChange={(e) => update('stock', e.target.value)} />
@@ -1040,6 +1083,27 @@ function Style() {
         color: var(--text);
       }
       textarea { resize: vertical; min-height: 60px; }
+
+      .image-upload { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .upload-btn {
+        display: inline-flex;
+        align-items: center;
+        cursor: pointer;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 9px 14px;
+        font-size: 0.9rem;
+        font-weight: 500;
+      }
+      .upload-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .image-preview {
+        width: 56px;
+        height: 56px;
+        object-fit: cover;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+      }
 
       .checkout-summary { display: flex; justify-content: space-between; font-size: 1.05rem; }
       .form-actions { display: flex; justify-content: flex-end; gap: 10px; }
