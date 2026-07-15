@@ -125,9 +125,23 @@ function Shop({ settings }) {
   const [checkoutOpen, setCheckoutOpen] = useState(false)
 
   useEffect(() => {
-    getProducts()
-      .then(setProducts)
-      .finally(() => setLoading(false))
+    let active = true
+    const loadProducts = () => {
+      getProducts()
+        .then((p) => active && setProducts(p))
+        .finally(() => active && setLoading(false))
+    }
+    loadProducts()
+    // Презареждане при връщане към таба, за да се видят нови/променени продукти.
+    const onFocus = () => loadProducts()
+    const onVisible = () => !document.hidden && loadProducts()
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      active = false
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   useEffect(() => {
