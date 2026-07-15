@@ -371,10 +371,6 @@ function Shop({ settings, cart, addToCart, changeQty, removeFromCart, clearCart 
       <Modal open={checkoutOpen} onClose={() => setCheckoutOpen(false)} title="Завършване на поръчката">
         <Checkout cart={cart} total={total} currency={currency} onComplete={handleOrderComplete} />
       </Modal>
-
-      <footer className="shop-footer">
-        <a href="#admin">Администратор</a>
-      </footer>
     </div>
   )
 }
@@ -1198,8 +1194,6 @@ function Style() {
       }
       .product-footer button:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
 
-      .shop-footer { text-align: center; margin-top: 40px; }
-      .shop-footer a { color: var(--muted); font-size: 0.8rem; text-decoration: none; }
 
       /* Buttons */
       .primary {
