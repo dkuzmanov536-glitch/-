@@ -40,39 +40,6 @@ async function login(email, password) {
   return data
 }
 
-async function refreshSession(refreshToken) {
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-    method: 'POST',
-    headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error_description || data.msg || 'Сесията изтече.')
-  return data
-}
-
-// Постоянна админ сесия (пази refresh token в localStorage, за да не се въвежда парола всеки път).
-const SESSION_KEY = 'admin_session'
-function saveSession(data) {
-  const session = {
-    token: data.access_token,
-    refresh_token: data.refresh_token,
-    email: data.user?.email,
-    expires_at: data.expires_at,
-  }
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session))
-  return session
-}
-function loadStoredSession() {
-  try {
-    return JSON.parse(localStorage.getItem(SESSION_KEY))
-  } catch {
-    return null
-  }
-}
-function clearSession() {
-  localStorage.removeItem(SESSION_KEY)
-}
 
 async function uploadProductImage(token, file) {
   const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
@@ -139,7 +106,6 @@ export default function App() {
   const [route, setRoute] = useState(parseRoute)
   const [settings, setSettings] = useState(null)
   const [session, setSession] = useState(null)
-  const [restoring, setRestoring] = useState(() => !!loadStoredSession()?.refresh_token)
   const [cart, setCart] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(CART_KEY)) || []
@@ -160,26 +126,15 @@ export default function App() {
       .catch(() => {})
   }, [])
 
-  // Възстановяване на админ сесията при отваряне (подновяване с refresh token).
-  useEffect(() => {
-    const stored = loadStoredSession()
-    if (!stored?.refresh_token) return
-    refreshSession(stored.refresh_token)
-      .then((data) => setSession(saveSession(data)))
-      .catch(() => clearSession())
-      .finally(() => setRestoring(false))
-  }, [])
-
   useEffect(() => {
     localStorage.setItem(CART_KEY, JSON.stringify(cart))
   }, [cart])
 
   function handleLogin(data) {
-    setSession(saveSession(data))
+    setSession({ token: data.access_token, email: data.user?.email })
   }
 
   function handleLogout() {
-    clearSession()
     setSession(null)
   }
 
@@ -209,10 +164,6 @@ export default function App() {
       {route.name === 'admin' ? (
         session ? (
           <Admin session={session} settings={settings} onSettingsChange={setSettings} onLogout={handleLogout} />
-        ) : restoring ? (
-          <div className="auth-gate">
-            <p className="hint">Възстановяване на сесията...</p>
-          </div>
         ) : (
           <AuthGate onLogin={handleLogin} />
         )
@@ -479,15 +430,30 @@ function AuthGate({ onLogin }) {
 
   return (
     <div className="auth-gate">
-      <form className="auth-form" onSubmit={submit}>
+      <form className="auth-form" onSubmit={submit} autoComplete="off">
         <h2>Вход за администратор</h2>
         <label>
           Имейл
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+          <input
+            type="email"
+            name="admin-email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoFocus
+            autoComplete="off"
+          />
         </label>
         <label>
           Парола
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <input
+            type="password"
+            name="admin-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoComplete="new-password"
+          />
         </label>
         {error && <p className="error">{error}</p>}
         <button className="primary" type="submit" disabled={loading}>
