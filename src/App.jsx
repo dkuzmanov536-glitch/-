@@ -346,6 +346,9 @@ function ProductCard({ product: p, currency, onAdd, isFav, onToggleFav }) {
       </div>
       <h3>{p.name}</h3>
       {p.description && <p className="desc">{p.description}</p>}
+      {p.stock > 0 && p.stock <= 2 && (
+        <p className="low-stock">{p.stock === 1 ? 'Остава само 1 бр.' : `Остават само ${p.stock} бр.`}</p>
+      )}
       <div className="product-footer">
         <strong>{money(p.price, currency)}</strong>
         <button
@@ -1652,6 +1655,7 @@ function Style() {
       .product-image .emoji { font-size: 3rem; }
       .product-card h3 { margin: 0 0 4px; font-size: 1.05rem; }
       .product-card .desc { color: var(--muted); font-size: 0.85rem; margin: 0 0 12px; flex-grow: 1; }
+      .low-stock { margin: 0 0 10px; color: #dc2626; font-size: 0.8rem; font-weight: 600; }
       .product-footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
       .product-footer button {
         background: var(--accent);
