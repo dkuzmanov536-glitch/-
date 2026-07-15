@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Pencil, Plus, Settings, ShoppingCart, Trash2, X } from 'lucide-react'
+import { Heart, Home, Pencil, Plus, Settings, ShoppingCart, Trash2, User, X } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Supabase (директен REST достъп, без @supabase/supabase-js)
@@ -40,6 +40,51 @@ async function login(email, password) {
   return data
 }
 
+async function signup(email, password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error_description || data.msg || 'Неуспешна регистрация.')
+  return data
+}
+
+async function refreshSession(refreshToken) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error_description || data.msg || 'Сесията изтече.')
+  return data
+}
+
+// Клиентска сесия (различна от админ; пази се, за да остане клиентът логнат).
+const CUSTOMER_KEY = 'customer_session'
+function saveCustomer(data) {
+  if (!data?.access_token) return null
+  const session = {
+    token: data.access_token,
+    refresh_token: data.refresh_token,
+    email: data.user?.email,
+  }
+  localStorage.setItem(CUSTOMER_KEY, JSON.stringify(session))
+  return session
+}
+function loadCustomer() {
+  try {
+    return JSON.parse(localStorage.getItem(CUSTOMER_KEY))
+  } catch {
+    return null
+  }
+}
+function clearCustomer() {
+  localStorage.removeItem(CUSTOMER_KEY)
+}
+
 
 async function uploadProductImage(token, file) {
   const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
@@ -72,6 +117,9 @@ function isUrl(value) {
 function parseRoute() {
   const hash = window.location.hash
   if (hash === '#admin') return { name: 'admin' }
+  if (hash === '#favorites') return { name: 'favorites' }
+  if (hash === '#cart') return { name: 'cart' }
+  if (hash === '#profile') return { name: 'profile' }
   const m = hash.match(/^#product\/(.+)$/)
   if (m) return { name: 'product', id: decodeURIComponent(m[1]) }
   return { name: 'shop' }
@@ -97,6 +145,7 @@ const updateSettings = (token, patch) =>
 
 const STATUSES = ['нова', 'изпратена', 'приключена', 'отказана']
 const CART_KEY = 'cart'
+const FAV_KEY = 'favorites'
 
 // ---------------------------------------------------------------------------
 // App
@@ -106,9 +155,17 @@ export default function App() {
   const [route, setRoute] = useState(parseRoute)
   const [settings, setSettings] = useState(null)
   const [session, setSession] = useState(null)
+  const [customer, setCustomer] = useState(loadCustomer)
   const [cart, setCart] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(CART_KEY)) || []
+    } catch {
+      return []
+    }
+  })
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(FAV_KEY)) || []
     } catch {
       return []
     }
@@ -130,12 +187,37 @@ export default function App() {
     localStorage.setItem(CART_KEY, JSON.stringify(cart))
   }, [cart])
 
+  useEffect(() => {
+    localStorage.setItem(FAV_KEY, JSON.stringify(favorites))
+  }, [favorites])
+
+  // Подновяване на клиентската сесия при отваряне.
+  useEffect(() => {
+    const stored = loadCustomer()
+    if (!stored?.refresh_token) return
+    refreshSession(stored.refresh_token)
+      .then((data) => setCustomer(saveCustomer(data)))
+      .catch(() => {
+        clearCustomer()
+        setCustomer(null)
+      })
+  }, [])
+
   function handleLogin(data) {
     setSession({ token: data.access_token, email: data.user?.email })
   }
 
   function handleLogout() {
     setSession(null)
+  }
+
+  function handleCustomerAuth(data) {
+    setCustomer(saveCustomer(data))
+  }
+
+  function handleCustomerLogout() {
+    clearCustomer()
+    setCustomer(null)
   }
 
   function addToCart(product) {
@@ -156,36 +238,121 @@ export default function App() {
     setCart((c) => c.filter((i) => i.id !== id))
   }
 
+  function toggleFavorite(id) {
+    setFavorites((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]))
+  }
+
+  const cartCount = cart.reduce((sum, i) => sum + i.qty, 0)
   const cartProps = { cart, addToCart, changeQty, removeFromCart, clearCart: () => setCart([]) }
+  const favProps = { favorites, toggleFavorite }
+
+  if (route.name === 'admin') {
+    return (
+      <>
+        <Style />
+        {session ? (
+          <Admin session={session} settings={settings} onSettingsChange={setSettings} onLogout={handleLogout} />
+        ) : (
+          <AuthGate onLogin={handleLogin} />
+        )}
+      </>
+    )
+  }
 
   return (
     <>
       <Style />
-      {route.name === 'admin' ? (
-        session ? (
-          <Admin session={session} settings={settings} onSettingsChange={setSettings} onLogout={handleLogout} />
-        ) : (
-          <AuthGate onLogin={handleLogin} />
-        )
+      {route.name === 'favorites' ? (
+        <FavoritesPage settings={settings} addToCart={addToCart} {...favProps} />
+      ) : route.name === 'cart' ? (
+        <CartPage settings={settings} {...cartProps} />
+      ) : route.name === 'profile' ? (
+        <ProfilePage customer={customer} onAuth={handleCustomerAuth} onLogout={handleCustomerLogout} />
       ) : route.name === 'product' ? (
-        <ProductPage productId={route.id} settings={settings} {...cartProps} />
+        <ProductPage productId={route.id} settings={settings} addToCart={addToCart} {...favProps} />
       ) : (
-        <Shop settings={settings} {...cartProps} />
+        <Shop settings={settings} addToCart={addToCart} {...favProps} />
       )}
+      <BottomNav active={route.name} cartCount={cartCount} favCount={favorites.length} />
     </>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Shop (витрина, количка, поръчка)
+// BottomNav (долна навигация)
 // ---------------------------------------------------------------------------
 
-function Shop({ settings, cart, addToCart, changeQty, removeFromCart, clearCart }) {
+function BottomNav({ active, cartCount, favCount }) {
+  const items = [
+    { key: 'shop', href: '#', label: 'Начало', icon: Home },
+    { key: 'favorites', href: '#favorites', label: 'Любими', icon: Heart, badge: favCount },
+    { key: 'cart', href: '#cart', label: 'Количка', icon: ShoppingCart, badge: cartCount },
+    { key: 'profile', href: '#profile', label: 'Профил', icon: User },
+  ]
+  return (
+    <nav className="bottom-nav">
+      {items.map(({ key, href, label, icon: Icon, badge }) => (
+        <a key={key} href={href} className={active === key ? 'bottom-nav-item active' : 'bottom-nav-item'}>
+          <span className="bottom-nav-icon">
+            <Icon size={22} />
+            {badge > 0 && <span className="bottom-nav-badge">{badge}</span>}
+          </span>
+          {label}
+        </a>
+      ))}
+    </nav>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ProductCard (карта на продукт — ползва се в Начало и Любими)
+// ---------------------------------------------------------------------------
+
+function ProductCard({ product: p, currency, onAdd, isFav, onToggleFav }) {
+  return (
+    <a className="product-card" href={`#product/${p.id}`}>
+      <div className="product-image">
+        {isUrl(p.image) ? <img src={p.image} alt={p.name} /> : <span className="emoji">{p.image || '📦'}</span>}
+        <button
+          className={isFav ? 'fav-btn active' : 'fav-btn'}
+          title={isFav ? 'Премахни от любими' : 'Добави в любими'}
+          aria-label="Любими"
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onToggleFav(p.id)
+          }}
+        >
+          <Heart size={18} fill={isFav ? 'currentColor' : 'none'} />
+        </button>
+      </div>
+      <h3>{p.name}</h3>
+      {p.description && <p className="desc">{p.description}</p>}
+      <div className="product-footer">
+        <strong>{money(p.price, currency)}</strong>
+        <button
+          disabled={p.stock <= 0}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onAdd(p)
+          }}
+        >
+          {p.stock <= 0 ? 'Изчерпан' : 'Добави'}
+        </button>
+      </div>
+    </a>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Shop / Начало (витрина с продукти)
+// ---------------------------------------------------------------------------
+
+function Shop({ settings, addToCart, favorites, toggleFavorite }) {
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [category, setCategory] = useState('всички')
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [checkoutOpen, setCheckoutOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -210,19 +377,6 @@ function Shop({ settings, cart, addToCart, changeQty, removeFromCart, clearCart 
   const currency = settings?.currency || 'лв.'
   const categories = ['всички', ...new Set(products.map((p) => p.category).filter(Boolean))]
   const filtered = category === 'всички' ? products : products.filter((p) => p.category === category)
-  const total = cart.reduce((sum, i) => sum + i.price * i.qty, 0)
-  const cartCount = cart.reduce((sum, i) => sum + i.qty, 0)
-
-  function addAndOpen(product) {
-    addToCart(product)
-    setDrawerOpen(true)
-  }
-
-  function handleOrderComplete() {
-    clearCart()
-    setCheckoutOpen(false)
-    setDrawerOpen(false)
-  }
 
   return (
     <div className="shop">
@@ -231,10 +385,6 @@ function Shop({ settings, cart, addToCart, changeQty, removeFromCart, clearCart 
           <h1>{settings?.shop_name || 'Моят магазин'}</h1>
           {settings?.tagline && <p className="tagline">{settings.tagline}</p>}
         </div>
-        <button className="cart-btn" onClick={() => setDrawerOpen(true)}>
-          <ShoppingCart size={20} />
-          <span>{cartCount}</span>
-        </button>
       </header>
 
       <a className="admin-fab" href="#admin" title="Администрация" aria-label="Администрация">
@@ -258,66 +408,130 @@ function Shop({ settings, cart, addToCart, changeQty, removeFromCart, clearCart 
       ) : (
         <div className="product-grid">
           {filtered.map((p) => (
-            <a className="product-card" key={p.id} href={`#product/${p.id}`}>
-              <div className="product-image">
-                {isUrl(p.image) ? <img src={p.image} alt={p.name} /> : <span className="emoji">{p.image || '📦'}</span>}
-              </div>
-              <h3>{p.name}</h3>
-              {p.description && <p className="desc">{p.description}</p>}
-              <div className="product-footer">
-                <strong>{money(p.price, currency)}</strong>
-                <button
-                  disabled={p.stock <= 0}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    addAndOpen(p)
-                  }}
-                >
-                  {p.stock <= 0 ? 'Изчерпан' : 'Добави'}
-                </button>
-              </div>
-            </a>
+            <ProductCard
+              key={p.id}
+              product={p}
+              currency={currency}
+              onAdd={addToCart}
+              isFav={favorites.includes(p.id)}
+              onToggleFav={toggleFavorite}
+            />
           ))}
         </div>
       )}
+    </div>
+  )
+}
 
-      <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Количка">
-        {cart.length === 0 ? (
-          <p className="hint">Количката е празна.</p>
-        ) : (
-          <>
-            <div className="cart-items">
-              {cart.map((i) => (
-                <div className="cart-item" key={i.id}>
-                  <span className="emoji">{isUrl(i.image) ? <img src={i.image} alt="" /> : i.image}</span>
-                  <div className="cart-item-info">
-                    <span>{i.name}</span>
-                    <small>{money(i.price, currency)}</small>
-                  </div>
-                  <input
-                    type="number"
-                    min="1"
-                    max={i.stock}
-                    value={i.qty}
-                    onChange={(e) => changeQty(i.id, Math.max(1, Math.min(Number(e.target.value) || 1, i.stock)))}
-                  />
-                  <button className="icon-btn" onClick={() => removeFromCart(i.id)}>
-                    <X size={16} />
-                  </button>
+// ---------------------------------------------------------------------------
+// FavoritesPage (Любими)
+// ---------------------------------------------------------------------------
+
+function FavoritesPage({ settings, addToCart, favorites, toggleFavorite }) {
+  const [products, setProducts] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let active = true
+    getProducts()
+      .then((p) => active && setProducts(p))
+      .finally(() => active && setLoading(false))
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const currency = settings?.currency || 'лв.'
+  const favProducts = products.filter((p) => favorites.includes(p.id))
+
+  return (
+    <div className="shop">
+      <header className="shop-header">
+        <div>
+          <h1>Любими</h1>
+        </div>
+      </header>
+
+      {loading ? (
+        <p className="hint">Зареждане...</p>
+      ) : favProducts.length === 0 ? (
+        <p className="hint">Още нямаш любими продукти. Натисни ♥ върху продукт, за да го добавиш тук.</p>
+      ) : (
+        <div className="product-grid">
+          {favProducts.map((p) => (
+            <ProductCard
+              key={p.id}
+              product={p}
+              currency={currency}
+              onAdd={addToCart}
+              isFav
+              onToggleFav={toggleFavorite}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// CartPage (Количка)
+// ---------------------------------------------------------------------------
+
+function CartPage({ settings, cart, changeQty, removeFromCart, clearCart }) {
+  const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const currency = settings?.currency || 'лв.'
+  const total = cart.reduce((sum, i) => sum + i.price * i.qty, 0)
+
+  function handleOrderComplete() {
+    clearCart()
+    setCheckoutOpen(false)
+  }
+
+  return (
+    <div className="shop">
+      <header className="shop-header">
+        <div>
+          <h1>Количка</h1>
+        </div>
+      </header>
+
+      {cart.length === 0 ? (
+        <p className="hint">
+          Количката е празна. <a href="#">Разгледай продуктите →</a>
+        </p>
+      ) : (
+        <>
+          <div className="cart-items">
+            {cart.map((i) => (
+              <div className="cart-item" key={i.id}>
+                <span className="emoji">{isUrl(i.image) ? <img src={i.image} alt="" /> : i.image}</span>
+                <div className="cart-item-info">
+                  <span>{i.name}</span>
+                  <small>{money(i.price, currency)}</small>
                 </div>
-              ))}
-            </div>
-            <div className="cart-total">
-              <span>Общо:</span>
-              <strong>{money(total, currency)}</strong>
-            </div>
-            <button className="primary" onClick={() => setCheckoutOpen(true)}>
-              Поръчай
-            </button>
-          </>
-        )}
-      </Drawer>
+                <input
+                  type="number"
+                  min="1"
+                  max={i.stock}
+                  value={i.qty}
+                  onChange={(e) => changeQty(i.id, Math.max(1, Math.min(Number(e.target.value) || 1, i.stock)))}
+                />
+                <button className="icon-btn" onClick={() => removeFromCart(i.id)}>
+                  <X size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="cart-total">
+            <span>Общо:</span>
+            <strong>{money(total, currency)}</strong>
+          </div>
+          <button className="primary" onClick={() => setCheckoutOpen(true)}>
+            Поръчай
+          </button>
+        </>
+      )}
 
       <Modal open={checkoutOpen} onClose={() => setCheckoutOpen(false)} title="Завършване на поръчката">
         <Checkout cart={cart} total={total} currency={currency} onComplete={handleOrderComplete} />
@@ -327,10 +541,114 @@ function Shop({ settings, cart, addToCart, changeQty, removeFromCart, clearCart 
 }
 
 // ---------------------------------------------------------------------------
+// ProfilePage (Профил — вход и регистрация за клиенти)
+// ---------------------------------------------------------------------------
+
+function ProfilePage({ customer, onAuth, onLogout }) {
+  if (customer) {
+    return (
+      <div className="shop">
+        <header className="shop-header">
+          <div>
+            <h1>Профил</h1>
+          </div>
+        </header>
+        <div className="profile-card">
+          <p className="hint">Влязъл си като:</p>
+          <strong className="profile-email">{customer.email}</strong>
+          <button className="primary" onClick={onLogout}>
+            Изход
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="shop">
+      <header className="shop-header">
+        <div>
+          <h1>Профил</h1>
+        </div>
+      </header>
+      <CustomerAuth onAuth={onAuth} />
+    </div>
+  )
+}
+
+function CustomerAuth({ onAuth }) {
+  const [mode, setMode] = useState('login')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  function switchMode(next) {
+    setMode(next)
+    setError('')
+    setInfo('')
+  }
+
+  async function submit(e) {
+    e.preventDefault()
+    setLoading(true)
+    setError('')
+    setInfo('')
+    try {
+      if (mode === 'register') {
+        const data = await signup(email, password)
+        if (data.access_token) {
+          onAuth(data)
+        } else {
+          setInfo('Регистрацията е успешна! Провери имейла си за потвърждение, след което влез.')
+          setMode('login')
+        }
+      } else {
+        const data = await login(email, password)
+        onAuth(data)
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="auth-card">
+      <div className="auth-tabs">
+        <button className={mode === 'login' ? 'active' : ''} onClick={() => switchMode('login')}>
+          Вход
+        </button>
+        <button className={mode === 'register' ? 'active' : ''} onClick={() => switchMode('register')}>
+          Регистрация
+        </button>
+      </div>
+      <form className="auth-form" onSubmit={submit}>
+        <label>
+          Имейл
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        </label>
+        <label>
+          Парола
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
+        </label>
+        {error && <p className="error">{error}</p>}
+        {info && <p className="hint">{info}</p>}
+        <button className="primary" type="submit" disabled={loading}>
+          {loading ? 'Моля изчакай...' : mode === 'register' ? 'Регистрирай се' : 'Вход'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // ProductPage (отделна страница за продукт)
 // ---------------------------------------------------------------------------
 
-function ProductPage({ productId, settings, cart, addToCart }) {
+function ProductPage({ productId, settings, addToCart, favorites, toggleFavorite }) {
   const [product, setProduct] = useState(null)
   const [loading, setLoading] = useState(true)
   const [added, setAdded] = useState(false)
@@ -345,17 +663,13 @@ function ProductPage({ productId, settings, cart, addToCart }) {
   }, [productId])
 
   const currency = settings?.currency || 'лв.'
-  const cartCount = cart.reduce((sum, i) => sum + i.qty, 0)
+  const isFav = product && favorites.includes(product.id)
 
   return (
     <div className="shop">
       <header className="shop-header">
         <a className="back-link" href="#">
           ← Към магазина
-        </a>
-        <a className="cart-btn" href="#">
-          <ShoppingCart size={20} />
-          <span>{cartCount}</span>
         </a>
       </header>
 
@@ -375,7 +689,17 @@ function ProductPage({ productId, settings, cart, addToCart }) {
             )}
           </div>
           <div className="product-page-info">
-            <h1>{product.name}</h1>
+            <div className="product-page-title">
+              <h1>{product.name}</h1>
+              <button
+                className={isFav ? 'fav-btn active' : 'fav-btn'}
+                title={isFav ? 'Премахни от любими' : 'Добави в любими'}
+                aria-label="Любими"
+                onClick={() => toggleFavorite(product.id)}
+              >
+                <Heart size={22} fill={isFav ? 'currentColor' : 'none'} />
+              </button>
+            </div>
             {product.category && <span className="product-detail-category">{product.category}</span>}
             <div className="product-detail-price">{money(product.price, currency)}</div>
             <p className={product.stock > 0 ? 'product-detail-stock' : 'product-detail-stock out'}>
@@ -394,7 +718,7 @@ function ProductPage({ productId, settings, cart, addToCart }) {
             </button>
             {added && (
               <p className="added-msg">
-                Добавено в количката! <a href="#">Виж количката →</a>
+                Добавено в количката! <a href="#cart">Виж количката →</a>
               </p>
             )}
           </div>
@@ -1033,7 +1357,7 @@ function Style() {
       .error { color: var(--danger); }
 
       /* Shop */
-      .shop { max-width: 1080px; margin: 0 auto; padding: 24px 20px 60px; }
+      .shop { max-width: 1080px; margin: 0 auto; padding: 24px 20px 96px; }
 
       .shop-header {
         display: flex;
@@ -1059,13 +1383,13 @@ function Style() {
       .admin-fab {
         position: fixed;
         left: 20px;
-        bottom: 20px;
+        bottom: 84px;
         z-index: 50;
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 48px;
-        height: 48px;
+        width: 44px;
+        height: 44px;
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 999px;
@@ -1073,6 +1397,92 @@ function Style() {
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
       }
       .admin-fab:hover { color: var(--accent); border-color: var(--accent); }
+
+      .bottom-nav {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 60;
+        display: flex;
+        background: var(--surface);
+        border-top: 1px solid var(--border);
+        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+      }
+      .bottom-nav-item {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        padding: 8px 4px calc(8px + env(safe-area-inset-bottom, 0px));
+        font-size: 0.72rem;
+        color: var(--muted);
+        text-decoration: none;
+      }
+      .bottom-nav-item.active { color: var(--accent); }
+      .bottom-nav-icon { position: relative; display: flex; }
+      .bottom-nav-badge {
+        position: absolute;
+        top: -6px;
+        right: -10px;
+        min-width: 16px;
+        height: 16px;
+        padding: 0 4px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.65rem;
+        line-height: 16px;
+        text-align: center;
+      }
+
+      .fav-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+      .fav-btn.active { color: #e0245e; border-color: #e0245e; }
+
+      .product-page-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+      .product-page-title h1 { margin: 0; }
+      .product-page-title .fav-btn { position: static; width: 40px; height: 40px; }
+
+      .auth-card { max-width: 380px; margin: 0 auto; }
+      .auth-tabs { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+      .auth-tabs button {
+        flex: 1;
+        padding: 10px;
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .auth-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+      .profile-card {
+        max-width: 380px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-start;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 20px;
+      }
+      .profile-email { font-size: 1.1rem; }
+      .profile-card .primary { margin-top: 8px; }
 
       .categories { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
       .chip {
@@ -1136,6 +1546,7 @@ function Style() {
       .product-detail-stock.out { color: #dc2626; font-weight: 600; }
       .product-detail-desc { margin: 4px 0; color: var(--text); line-height: 1.5; white-space: pre-wrap; }
       .product-image {
+        position: relative;
         height: 120px;
         display: flex;
         align-items: center;
