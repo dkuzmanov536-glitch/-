@@ -64,8 +64,9 @@ npm run preview # преглед на билда
 ### Автентикация
 
 Админ входът е през Supabase Auth (имейл + парола, GoTrue endpoint `/auth/v1/token`).
-JWT-то се пази **само в React state** (не в localStorage) — при затваряне се излиза.
-Админ акаунтът се създава ръчно от таблото: Authentication → Users → Add user.
+Сесията (вкл. `refresh_token`) се пази в `localStorage` под ключ `admin_session`; при
+отваряне се подновява автоматично с refresh token, за да не се въвежда парола всеки път.
+„Изход“ изчиства сесията. Админ акаунтът се създава ръчно от таблото: Authentication → Users → Add user.
 
 ## Статуси на поръчка
 
