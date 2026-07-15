@@ -399,6 +399,18 @@ function Orders({ token }) {
 
   useEffect(() => {
     load()
+    const refresh = () => {
+      if (document.hidden) return
+      getOrders(token)
+        .then(setOrders)
+        .catch(() => {})
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
   }, [])
 
   async function load() {
@@ -482,6 +494,19 @@ function ProductsAdmin({ token }) {
 
   useEffect(() => {
     load()
+    // Тихо обновяване при връщане към таба (без индикатор за зареждане).
+    const refresh = () => {
+      if (document.hidden) return
+      getProducts()
+        .then(setProducts)
+        .catch(() => {})
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
   }, [])
 
   async function load() {
