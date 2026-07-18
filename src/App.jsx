@@ -171,6 +171,27 @@ const deleteMessage = (token, id) => rest(`messages?id=eq.${id}`, { method: 'DEL
 const STATUSES = ['нова', 'изпратена', 'приключена', 'отказана']
 const CART_KEY = 'cart'
 const FAV_KEY = 'favorites'
+// Formspree endpoint за имейл известия при ново съобщение (напр. 'https://formspree.io/f/xxxxxxx').
+// Празно = изключено. Попълни с твоя endpoint, за да получаваш имейли.
+const FORMSPREE_ENDPOINT = ''
+
+async function notifyFormspree(msg) {
+  if (!FORMSPREE_ENDPOINT) return
+  try {
+    await fetch(FORMSPREE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        name: msg.name || 'Клиент',
+        email: msg.email || '',
+        message: msg.body,
+        _subject: 'Ново съобщение от магазина',
+      }),
+    })
+  } catch {
+    // известието е второстепенно — не спираме, ако падне
+  }
+}
 
 // ---------------------------------------------------------------------------
 // App
@@ -624,14 +645,13 @@ function SellerContact({ settings, customer }) {
     setSending(true)
     setError('')
     try {
-      await createMessage(
-        {
-          name: (customer ? null : name) || null,
-          email: customer?.email || replyEmail || null,
-          body: body.trim(),
-        },
-        customer?.token,
-      )
+      const msg = {
+        name: (customer ? null : name) || null,
+        email: customer?.email || replyEmail || null,
+        body: body.trim(),
+      }
+      await createMessage(msg, customer?.token)
+      notifyFormspree(msg)
       setSent(true)
       setBody('')
       setName('')
@@ -1180,9 +1200,19 @@ function Messages({ token }) {
               <input type="checkbox" checked={m.handled} disabled={busy === m.id} onChange={(e) => toggle(m.id, e.target.checked)} />
               Обработено
             </label>
-            <button className="order-delete" onClick={() => remove(m.id)} disabled={busy === m.id} title="Изтрий" aria-label="Изтрий">
-              <Trash2 size={16} />
-            </button>
+            <div className="order-card-actions">
+              {m.email && (
+                <a
+                  className="message-reply"
+                  href={`mailto:${m.email}?subject=${encodeURIComponent('Отговор на вашето съобщение')}&body=${encodeURIComponent('\n\n----- Вашето съобщение -----\n' + m.body)}`}
+                >
+                  Отговори по имейл
+                </a>
+              )}
+              <button className="order-delete" onClick={() => remove(m.id)} disabled={busy === m.id} title="Изтрий" aria-label="Изтрий">
+                <Trash2 size={16} />
+              </button>
+            </div>
           </div>
         </div>
       ))}
@@ -1797,6 +1827,17 @@ function Style() {
       .message-handled { opacity: 0.6; }
       .message-check { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: var(--muted); font-weight: 500; }
       .message-check input { width: auto; }
+      .message-reply {
+        display: inline-flex;
+        align-items: center;
+        background: var(--surface);
+        border: 1px solid var(--accent);
+        color: var(--accent);
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
 
       .categories { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
       .chip {
