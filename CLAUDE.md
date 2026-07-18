@@ -57,6 +57,9 @@ npm run preview # преглед на билда
   `user_id` (акаунт на клиента, `default auth.uid()`; null за анонимни поръчки)
 - `shop_settings` — един ред (id=1): shop_name, tagline, currency, contact_phone, contact_email, contact_note
   (данните за контакт се въвеждат от админ Настройки и се показват в „Профил“ → „Свържи се с продавача“)
+- `messages` — id, created_at, user_id, name, email, body, handled — съобщения от клиенти през сайта
+  („Профил“ → форма „Свържи се с продавача“); всеки може да създаде, чете/променя/трие само админ имейлът.
+  Админът ги вижда в таб „Съобщения“ и може да ги маркира „обработено“ или да ги трие.
 
 Тригер `trg_decrement_stock` (функция `decrement_stock_on_order`, SECURITY DEFINER) намалява
 `products.stock` при всяка нова поръчка (заобикаля RLS, за да работи и при анонимни/клиентски поръчки).

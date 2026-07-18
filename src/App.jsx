@@ -161,6 +161,13 @@ const getSettings = () => rest('shop_settings?select=*&id=eq.1').then((r) => r[0
 const updateSettings = (token, patch) =>
   rest('shop_settings?id=eq.1', { method: 'PATCH', token, body: patch, headers: { Prefer: 'return=representation' } }).then((r) => r[0])
 
+// Съобщения „Свържи се с продавача“ (клиентът пише, админът чете)
+const createMessage = (msg, token) => rest('messages', { method: 'POST', token, body: msg, headers: { Prefer: 'return=minimal' } })
+const getMessages = (token) => rest('messages?select=*&order=created_at.desc', { token })
+const markMessage = (token, id, handled) =>
+  rest(`messages?id=eq.${id}`, { method: 'PATCH', token, body: { handled }, headers: { Prefer: 'return=representation' } }).then((r) => r[0])
+const deleteMessage = (token, id) => rest(`messages?id=eq.${id}`, { method: 'DELETE', token })
+
 const STATUSES = ['нова', 'изпратена', 'приключена', 'отказана']
 const CART_KEY = 'cart'
 const FAV_KEY = 'favorites'
@@ -582,7 +589,7 @@ function ProfilePage({ settings, customer, onAuth, onLogout }) {
           </button>
         </div>
         <MyOrders token={customer.token} currency={settings?.currency} />
-        <SellerContact settings={settings} />
+        <SellerContact settings={settings} customer={customer} />
       </div>
     )
   }
@@ -595,22 +602,79 @@ function ProfilePage({ settings, customer, onAuth, onLogout }) {
         </div>
       </header>
       <CustomerAuth onAuth={onAuth} />
-      <SellerContact settings={settings} />
+      <SellerContact settings={settings} customer={customer} />
     </div>
   )
 }
 
-function SellerContact({ settings }) {
+function SellerContact({ settings, customer }) {
   const phone = settings?.contact_phone
   const email = settings?.contact_email
   const note = settings?.contact_note
+  const [name, setName] = useState('')
+  const [replyEmail, setReplyEmail] = useState('')
+  const [body, setBody] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sent, setSent] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!body.trim()) return
+    setSending(true)
+    setError('')
+    try {
+      await createMessage(
+        {
+          name: (customer ? null : name) || null,
+          email: customer?.email || replyEmail || null,
+          body: body.trim(),
+        },
+        customer?.token,
+      )
+      setSent(true)
+      setBody('')
+      setName('')
+      setReplyEmail('')
+    } catch (err) {
+      setError('Съобщението не беше изпратено. ' + (err?.message || '').slice(0, 200))
+    } finally {
+      setSending(false)
+    }
+  }
+
   return (
     <div className="seller-contact">
       <h2>Свържи се с продавача</h2>
-      {!phone && !email && !note ? (
-        <p className="hint">Продавачът все още не е добавил данни за контакт.</p>
+      {sent ? (
+        <p className="hint">Съобщението е изпратено! Продавачът ще се свърже с теб.</p>
       ) : (
-        <>
+        <form className="contact-form" onSubmit={submit}>
+          {!customer && (
+            <>
+              <label>
+                Име
+                <input value={name} onChange={(e) => setName(e.target.value)} />
+              </label>
+              <label>
+                Имейл (за отговор)
+                <input type="email" value={replyEmail} onChange={(e) => setReplyEmail(e.target.value)} />
+              </label>
+            </>
+          )}
+          <label>
+            Съобщение
+            <textarea value={body} onChange={(e) => setBody(e.target.value)} required placeholder="Напиши въпроса си тук..." />
+          </label>
+          {error && <p className="error">{error}</p>}
+          <button className="primary" type="submit" disabled={sending}>
+            {sending ? 'Изпращане...' : 'Изпрати съобщение'}
+          </button>
+        </form>
+      )}
+      {(phone || email || note) && (
+        <div className="contact-details">
+          <p className="hint">Или директно:</p>
           {phone && (
             <p>
               <span className="contact-label">Телефон:</span>{' '}
@@ -623,7 +687,7 @@ function SellerContact({ settings }) {
             </p>
           )}
           {note && <p className="contact-note">{note}</p>}
-        </>
+        </div>
       )}
     </div>
   )
@@ -939,6 +1003,9 @@ function Admin({ session, settings, onSettingsChange, onLogout }) {
         <button className={tab === 'products' ? 'active' : ''} onClick={() => setTab('products')}>
           Продукти
         </button>
+        <button className={tab === 'messages' ? 'active' : ''} onClick={() => setTab('messages')}>
+          Съобщения
+        </button>
         <button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>
           Настройки
         </button>
@@ -947,6 +1014,7 @@ function Admin({ session, settings, onSettingsChange, onLogout }) {
       <main className="admin-content">
         {tab === 'orders' && <Orders token={session.token} />}
         {tab === 'products' && <ProductsAdmin token={session.token} />}
+        {tab === 'messages' && <Messages token={session.token} />}
         {tab === 'settings' && <SettingsPanel token={session.token} settings={settings} onChange={onSettingsChange} />}
       </main>
     </div>
@@ -1044,6 +1112,77 @@ function Orders({ token }) {
                 <Trash2 size={16} />
               </button>
             </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Messages (админ — съобщения от клиенти)
+// ---------------------------------------------------------------------------
+
+function Messages({ token }) {
+  const [messages, setMessages] = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(null)
+
+  useEffect(() => {
+    getMessages(token)
+      .then((m) => setMessages(m || []))
+      .catch(() => setError('Неуспешно зареждане на съобщенията.'))
+  }, [token])
+
+  async function toggle(id, handled) {
+    setBusy(id)
+    try {
+      const updated = await markMessage(token, id, handled)
+      setMessages((ms) => ms.map((m) => (m.id === id ? updated : m)))
+    } catch {
+      setError('Неуспешна промяна.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function remove(id) {
+    if (!window.confirm('Да изтрия ли това съобщение?')) return
+    setBusy(id)
+    try {
+      await deleteMessage(token, id)
+      setMessages((ms) => ms.filter((m) => m.id !== id))
+    } catch {
+      setError('Неуспешно изтриване.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (error) return <p className="error">{error}</p>
+  if (messages === null) return <p className="hint">Зареждане...</p>
+  if (messages.length === 0) return <p className="hint">Все още няма съобщения.</p>
+
+  return (
+    <div className="orders-list">
+      {messages.map((m) => (
+        <div className={m.handled ? 'order-card message-handled' : 'order-card'} key={m.id}>
+          <div className="order-card-header">
+            <div>
+              <strong>{m.name || m.email || 'Клиент'}</strong>
+              {m.email && <div className="hint">{m.email}</div>}
+            </div>
+            <span className="order-date">{formatDate(m.created_at)}</span>
+          </div>
+          <p className="message-body">{m.body}</p>
+          <div className="order-card-footer">
+            <label className="message-check">
+              <input type="checkbox" checked={m.handled} disabled={busy === m.id} onChange={(e) => toggle(m.id, e.target.checked)} />
+              Обработено
+            </label>
+            <button className="order-delete" onClick={() => remove(m.id)} disabled={busy === m.id} title="Изтрий" aria-label="Изтрий">
+              <Trash2 size={16} />
+            </button>
           </div>
         </div>
       ))}
@@ -1652,6 +1791,12 @@ function Style() {
       .contact-label { color: var(--muted); }
       .contact-note { color: var(--muted); white-space: pre-wrap; }
       .settings-subtitle { margin: 8px 0 0; font-size: 1rem; }
+      .contact-form { display: flex; flex-direction: column; gap: 12px; }
+      .contact-details { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+      .message-body { margin: 4px 0 0; white-space: pre-wrap; line-height: 1.5; }
+      .message-handled { opacity: 0.6; }
+      .message-check { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: var(--muted); font-weight: 500; }
+      .message-check input { width: auto; }
 
       .categories { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
       .chip {
