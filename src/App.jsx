@@ -582,6 +582,7 @@ function ProfilePage({ settings, customer, onAuth, onLogout }) {
           </button>
         </div>
         <MyOrders token={customer.token} currency={settings?.currency} />
+        <SellerContact settings={settings} />
       </div>
     )
   }
@@ -594,6 +595,36 @@ function ProfilePage({ settings, customer, onAuth, onLogout }) {
         </div>
       </header>
       <CustomerAuth onAuth={onAuth} />
+      <SellerContact settings={settings} />
+    </div>
+  )
+}
+
+function SellerContact({ settings }) {
+  const phone = settings?.contact_phone
+  const email = settings?.contact_email
+  const note = settings?.contact_note
+  return (
+    <div className="seller-contact">
+      <h2>Свържи се с продавача</h2>
+      {!phone && !email && !note ? (
+        <p className="hint">Продавачът все още не е добавил данни за контакт.</p>
+      ) : (
+        <>
+          {phone && (
+            <p>
+              <span className="contact-label">Телефон:</span>{' '}
+              <a href={`tel:${phone.replace(/\s+/g, '')}`}>{phone}</a>
+            </p>
+          )}
+          {email && (
+            <p>
+              <span className="contact-label">Имейл:</span> <a href={`mailto:${email}`}>{email}</a>
+            </p>
+          )}
+          {note && <p className="contact-note">{note}</p>}
+        </>
+      )}
     </div>
   )
 }
@@ -1246,6 +1277,9 @@ function SettingsPanel({ token, settings, onChange }) {
     shop_name: settings?.shop_name || '',
     tagline: settings?.tagline || '',
     currency: settings?.currency || 'лв.',
+    contact_phone: settings?.contact_phone || '',
+    contact_email: settings?.contact_email || '',
+    contact_note: settings?.contact_note || '',
   })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -1253,7 +1287,14 @@ function SettingsPanel({ token, settings, onChange }) {
 
   useEffect(() => {
     if (settings) {
-      setForm({ shop_name: settings.shop_name || '', tagline: settings.tagline || '', currency: settings.currency || 'лв.' })
+      setForm({
+        shop_name: settings.shop_name || '',
+        tagline: settings.tagline || '',
+        currency: settings.currency || 'лв.',
+        contact_phone: settings.contact_phone || '',
+        contact_email: settings.contact_email || '',
+        contact_note: settings.contact_note || '',
+      })
     }
   }, [settings])
 
@@ -1290,6 +1331,24 @@ function SettingsPanel({ token, settings, onChange }) {
       <label>
         Валута
         <input value={form.currency} onChange={(e) => update('currency', e.target.value)} />
+      </label>
+
+      <h3 className="settings-subtitle">Данни за контакт (виждат се в „Профил“ → „Свържи се с продавача“)</h3>
+      <label>
+        Телефон
+        <input value={form.contact_phone} onChange={(e) => update('contact_phone', e.target.value)} placeholder="напр. 0888 123 456" />
+      </label>
+      <label>
+        Имейл
+        <input type="email" value={form.contact_email} onChange={(e) => update('contact_email', e.target.value)} placeholder="напр. shop@example.com" />
+      </label>
+      <label>
+        Допълнителна бележка
+        <textarea
+          value={form.contact_note}
+          onChange={(e) => update('contact_note', e.target.value)}
+          placeholder="напр. работно време, Viber, адрес..."
+        />
       </label>
       {error && <p className="error">{error}</p>}
       {saved && <p className="hint">Запазено.</p>}
@@ -1578,6 +1637,20 @@ function Style() {
       }
       .profile-email { font-size: 1.1rem; }
       .profile-card .primary { margin-top: 8px; }
+
+      .seller-contact {
+        max-width: 640px;
+        margin: 24px auto 0;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 20px;
+      }
+      .seller-contact h2 { margin: 0 0 10px; font-size: 1.2rem; }
+      .seller-contact p { margin: 6px 0; }
+      .contact-label { color: var(--muted); }
+      .contact-note { color: var(--muted); white-space: pre-wrap; }
+      .settings-subtitle { margin: 8px 0 0; font-size: 1rem; }
 
       .categories { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
       .chip {

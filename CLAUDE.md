@@ -55,7 +55,8 @@ npm run preview # преглед на билда
 - `products` — id, name, price, category, image (емоджи или URL), stock, description, created_at
 - `orders` — id, created_at, customer_name/phone/city/address, notes, items (jsonb), total, currency, payment, status,
   `user_id` (акаунт на клиента, `default auth.uid()`; null за анонимни поръчки)
-- `shop_settings` — един ред (id=1): shop_name, tagline, currency
+- `shop_settings` — един ред (id=1): shop_name, tagline, currency, contact_phone, contact_email, contact_note
+  (данните за контакт се въвеждат от админ Настройки и се показват в „Профил“ → „Свържи се с продавача“)
 
 Тригер `trg_decrement_stock` (функция `decrement_stock_on_order`, SECURITY DEFINER) намалява
 `products.stock` при всяка нова поръчка (заобикаля RLS, за да работи и при анонимни/клиентски поръчки).
