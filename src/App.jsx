@@ -173,7 +173,7 @@ const CART_KEY = 'cart'
 const FAV_KEY = 'favorites'
 // Formspree endpoint за имейл известия при ново съобщение (напр. 'https://formspree.io/f/xxxxxxx').
 // Празно = изключено. Попълни с твоя endpoint, за да получаваш имейли.
-const FORMSPREE_ENDPOINT = ''
+const FORMSPREE_ENDPOINT = 'https://formspree.io/f/mqerqlww'
 
 async function notifyFormspree(msg) {
   if (!FORMSPREE_ENDPOINT) return
