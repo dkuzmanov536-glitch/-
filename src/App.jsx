@@ -1396,8 +1396,9 @@ function Checkout({ cart, total, currency, onComplete, customerToken }) {
         customerToken,
       )
       onComplete()
-    } catch {
-      setError('Възникна грешка при изпращане на поръчката. Опитайте отново.')
+    } catch (err) {
+      const detail = (err?.message || '').slice(0, 300)
+      setError('Възникна грешка при изпращане на поръчката. ' + (detail || 'Опитайте отново.'))
     } finally {
       setSubmitting(false)
     }
