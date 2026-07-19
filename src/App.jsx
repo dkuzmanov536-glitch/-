@@ -67,6 +67,7 @@ const CUSTOMER_KEY = 'customer_session'
 function saveCustomer(data) {
   if (!data?.access_token) return null
   const session = {
+    id: data.user?.id,
     token: data.access_token,
     refresh_token: data.refresh_token,
     email: data.user?.email,
@@ -112,6 +113,18 @@ function money(n, currency = 'лв.') {
 
 function isUrl(value) {
   return typeof value === 'string' && /^https?:\/\//.test(value)
+}
+
+const ADMIN_EMAIL = 'dimitrkuzmanov3@gmail.com'
+
+function isOnSale(p) {
+  return p && p.sale_price != null && Number(p.sale_price) > 0 && Number(p.sale_price) < Number(p.price)
+}
+function effectivePrice(p) {
+  return isOnSale(p) ? Number(p.sale_price) : Number(p.price)
+}
+function discountPercent(p) {
+  return isOnSale(p) ? Math.round((1 - Number(p.sale_price) / Number(p.price)) * 100) : 0
 }
 
 function formatDate(iso) {
@@ -165,6 +178,12 @@ const updateSettings = (token, patch) =>
 const createMessage = (msg, token) => rest('messages', { method: 'POST', token, body: msg, headers: { Prefer: 'return=minimal' } })
 const getMessages = (token) => rest('messages?select=*&order=created_at.desc', { token })
 const getThread = (token) => rest('messages?select=*&order=created_at.asc', { token })
+
+// Отзиви
+const getReviews = (productId) => rest(`reviews?select=*&product_id=eq.${productId}&order=created_at.desc`)
+const createReview = (token, review) =>
+  rest('reviews', { method: 'POST', token, body: review, headers: { Prefer: 'return=representation' } }).then((r) => r[0])
+const deleteReview = (token, id) => rest(`reviews?id=eq.${id}`, { method: 'DELETE', token })
 const markMessage = (token, id, handled) =>
   rest(`messages?id=eq.${id}`, { method: 'PATCH', token, body: { handled }, headers: { Prefer: 'return=representation' } }).then((r) => r[0])
 const deleteMessage = (token, id) => rest(`messages?id=eq.${id}`, { method: 'DELETE', token })
@@ -273,7 +292,7 @@ export default function App() {
       if (existing) {
         return c.map((i) => (i.id === product.id ? { ...i, qty: Math.min(i.qty + 1, product.stock) } : i))
       }
-      return [...c, { id: product.id, name: product.name, price: product.price, image: product.image, qty: 1, stock: product.stock }]
+      return [...c, { id: product.id, name: product.name, price: effectivePrice(product), image: product.image, qty: 1, stock: product.stock }]
     })
   }
 
@@ -316,7 +335,7 @@ export default function App() {
       ) : route.name === 'profile' ? (
         <ProfilePage settings={settings} customer={customer} onAuth={handleCustomerAuth} onLogout={handleCustomerLogout} />
       ) : route.name === 'product' ? (
-        <ProductPage productId={route.id} settings={settings} addToCart={addToCart} {...favProps} />
+        <ProductPage productId={route.id} settings={settings} customer={customer} addToCart={addToCart} {...favProps} />
       ) : (
         <Shop settings={settings} addToCart={addToCart} {...favProps} />
       )}
@@ -359,6 +378,7 @@ function ProductCard({ product: p, currency, onAdd, isFav, onToggleFav }) {
   return (
     <a className="product-card" href={`#product/${p.id}`}>
       <div className="product-image">
+        {isOnSale(p) && <span className="sale-badge">-{discountPercent(p)}%</span>}
         {isUrl(p.image) ? <img src={p.image} alt={p.name} /> : <span className="emoji">{p.image || '📦'}</span>}
         <button
           className={isFav ? 'fav-btn active' : 'fav-btn'}
@@ -379,7 +399,14 @@ function ProductCard({ product: p, currency, onAdd, isFav, onToggleFav }) {
         <p className="low-stock">{p.stock === 1 ? 'Остава само 1 бр.' : `Остават само ${p.stock} бр.`}</p>
       )}
       <div className="product-footer">
-        <strong>{money(p.price, currency)}</strong>
+        {isOnSale(p) ? (
+          <span className="price-wrap">
+            <s className="old-price">{money(p.price, currency)}</s>
+            <strong className="sale-price">{money(p.sale_price, currency)}</strong>
+          </span>
+        ) : (
+          <strong>{money(p.price, currency)}</strong>
+        )}
         <button
           disabled={p.stock <= 0}
           onClick={(e) => {
@@ -950,7 +977,7 @@ function MyOrders({ token, currency }) {
 // ProductPage (отделна страница за продукт)
 // ---------------------------------------------------------------------------
 
-function ProductPage({ productId, settings, addToCart, favorites, toggleFavorite }) {
+function ProductPage({ productId, settings, customer, addToCart, favorites, toggleFavorite }) {
   const [product, setProduct] = useState(null)
   const [loading, setLoading] = useState(true)
   const [added, setAdded] = useState(false)
@@ -984,6 +1011,7 @@ function ProductPage({ productId, settings, addToCart, favorites, toggleFavorite
       ) : (
         <div className="product-page">
           <div className="product-page-image">
+            {isOnSale(product) && <span className="sale-badge">-{discountPercent(product)}%</span>}
             {isUrl(product.image) ? (
               <img src={product.image} alt={product.name} />
             ) : (
@@ -1003,7 +1031,14 @@ function ProductPage({ productId, settings, addToCart, favorites, toggleFavorite
               </button>
             </div>
             {product.category && <span className="product-detail-category">{product.category}</span>}
-            <div className="product-detail-price">{money(product.price, currency)}</div>
+            {isOnSale(product) ? (
+              <div className="product-detail-price">
+                <s className="old-price">{money(product.price, currency)}</s>{' '}
+                <span className="sale-price">{money(product.sale_price, currency)}</span>
+              </div>
+            ) : (
+              <div className="product-detail-price">{money(product.price, currency)}</div>
+            )}
             <p className={product.stock > 0 ? 'product-detail-stock' : 'product-detail-stock out'}>
               {product.stock > 0 ? `Налични: ${product.stock} бр.` : 'Изчерпан'}
             </p>
@@ -1024,6 +1059,150 @@ function ProductPage({ productId, settings, addToCart, favorites, toggleFavorite
               </p>
             )}
           </div>
+        </div>
+      )}
+
+      {product && <Reviews productId={product.id} customer={customer} />}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Reviews (отзиви за продукт)
+// ---------------------------------------------------------------------------
+
+function Stars({ value }) {
+  return (
+    <span className="stars" aria-label={`${value} от 5`}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <span key={n} className={n <= value ? 'star on' : 'star'}>
+          ★
+        </span>
+      ))}
+    </span>
+  )
+}
+
+function Reviews({ productId, customer }) {
+  const [reviews, setReviews] = useState(null)
+  const [rating, setRating] = useState(5)
+  const [name, setName] = useState('')
+  const [body, setBody] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  function load() {
+    return getReviews(productId)
+      .then((r) => setReviews(r || []))
+      .catch(() => setError('Неуспешно зареждане на отзивите.'))
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productId])
+
+  const isAdmin = customer?.email === ADMIN_EMAIL
+  const avg = reviews && reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!body.trim()) return
+    setBusy(true)
+    setError('')
+    try {
+      await createReview(customer.token, {
+        product_id: productId,
+        rating,
+        body: body.trim(),
+        author_name: name.trim() || customer.email,
+      })
+      setBody('')
+      setName('')
+      setRating(5)
+      await load()
+    } catch {
+      setError('Отзивът не се запази.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove(id) {
+    if (!window.confirm('Да изтрия ли този отзив?')) return
+    try {
+      await deleteReview(customer.token, id)
+      setReviews((rs) => rs.filter((r) => r.id !== id))
+    } catch {
+      setError('Неуспешно изтриване.')
+    }
+  }
+
+  return (
+    <div className="reviews">
+      <div className="reviews-head">
+        <h2>Отзиви</h2>
+        {reviews && reviews.length > 0 && (
+          <span className="reviews-avg">
+            <Stars value={Math.round(avg)} /> {avg.toFixed(1)} ({reviews.length})
+          </span>
+        )}
+      </div>
+
+      {customer ? (
+        <form className="review-form" onSubmit={submit}>
+          <label>
+            Оценка
+            <select value={rating} onChange={(e) => setRating(Number(e.target.value))}>
+              {[5, 4, 3, 2, 1].map((n) => (
+                <option key={n} value={n}>
+                  {n} звезди
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Име (по желание)
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Как да се показва" />
+          </label>
+          <label>
+            Отзив
+            <textarea value={body} onChange={(e) => setBody(e.target.value)} required placeholder="Сподели мнението си..." />
+          </label>
+          {error && <p className="error">{error}</p>}
+          <button className="primary" type="submit" disabled={busy}>
+            {busy ? 'Изпращане...' : 'Публикувай отзив'}
+          </button>
+        </form>
+      ) : (
+        <p className="hint">
+          <a href="#profile">Влез в профила си</a>, за да оставиш отзив.
+        </p>
+      )}
+
+      {reviews === null ? (
+        <p className="hint">Зареждане...</p>
+      ) : reviews.length === 0 ? (
+        <p className="hint">Още няма отзиви за този продукт.</p>
+      ) : (
+        <div className="review-list">
+          {reviews.map((r) => (
+            <div className="review-item" key={r.id}>
+              <div className="review-top">
+                <strong>{r.author_name || 'Клиент'}</strong>
+                <Stars value={r.rating} />
+              </div>
+              {r.body && <p className="review-body">{r.body}</p>}
+              <div className="review-meta">
+                <span>{formatDate(r.created_at)}</span>
+                {(isAdmin || (customer && r.user_id === customer.id)) && (
+                  <button className="review-del" onClick={() => remove(r.id)}>
+                    Изтрий
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -1479,6 +1658,7 @@ function ProductForm({ product, token, onSave, onCancel }) {
   const [form, setForm] = useState({
     name: product.name || '',
     price: product.price ?? '',
+    sale_price: product.sale_price ?? '',
     category: product.category || '',
     image: product.image || '',
     stock: product.stock ?? 0,
@@ -1521,6 +1701,7 @@ function ProductForm({ product, token, onSave, onCancel }) {
         ...(product.id ? { id: product.id } : {}),
         name: form.name,
         price: Number(form.price),
+        sale_price: form.sale_price === '' || form.sale_price === null ? null : Number(form.sale_price),
         category: form.category || null,
         image: form.image || '📦',
         stock: Number(form.stock) || 0,
@@ -1542,6 +1723,17 @@ function ProductForm({ product, token, onSave, onCancel }) {
       <label>
         Цена*
         <input type="number" step="0.01" min="0" value={form.price} onChange={(e) => update('price', e.target.value)} required />
+      </label>
+      <label>
+        Промоцена (намаление) — остави празно за без промоция
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          value={form.sale_price}
+          onChange={(e) => update('sale_price', e.target.value)}
+          placeholder="напр. 19.99"
+        />
       </label>
       <label>
         Категория
@@ -2076,6 +2268,40 @@ function Style() {
       .product-card h3 { margin: 0 0 4px; font-size: 1.05rem; }
       .product-card .desc { color: var(--muted); font-size: 0.85rem; margin: 0 0 12px; flex-grow: 1; }
       .low-stock { margin: 0 0 10px; color: #dc2626; font-size: 0.8rem; font-weight: 600; }
+
+      .sale-badge {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        z-index: 1;
+        background: #dc2626;
+        color: #fff;
+        font-size: 0.78rem;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 999px;
+      }
+      .price-wrap { display: flex; flex-direction: column; line-height: 1.1; }
+      .old-price { color: var(--muted); font-size: 0.85rem; }
+      .sale-price { color: #dc2626; }
+      .product-detail-price .old-price { font-size: 1rem; font-weight: 400; }
+      .product-detail-price .sale-price { color: #dc2626; }
+
+      .stars { white-space: nowrap; }
+      .stars .star { color: var(--border); }
+      .stars .star.on { color: #f5a623; }
+
+      .reviews { max-width: 640px; margin: 32px auto 0; }
+      .reviews-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .reviews-head h2 { margin: 0; font-size: 1.3rem; }
+      .reviews-avg { color: var(--muted); font-size: 0.9rem; }
+      .review-form { display: flex; flex-direction: column; gap: 10px; margin: 14px 0 20px; }
+      .review-list { display: flex; flex-direction: column; gap: 12px; }
+      .review-item { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+      .review-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .review-body { margin: 6px 0; line-height: 1.5; white-space: pre-wrap; }
+      .review-meta { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 0.8rem; }
+      .review-del { background: none; border: none; color: var(--danger); font-size: 0.8rem; padding: 0; }
       .product-footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
       .product-footer button {
         background: var(--accent);
