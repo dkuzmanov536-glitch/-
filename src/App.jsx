@@ -286,22 +286,30 @@ export default function App() {
     setCustomer(null)
   }
 
-  function addToCart(product) {
+  function addToCart(product, note) {
     setCart((c) => {
-      const existing = c.find((i) => i.id === product.id)
-      if (existing) {
-        return c.map((i) => (i.id === product.id ? { ...i, qty: Math.min(i.qty + 1, product.stock) } : i))
+      // Поръчка по заявка: винаги нов ред със своя бележка (не се слива).
+      if (product.custom || note) {
+        const key = `${product.id}:${Date.now()}:${Math.random().toString(36).slice(2)}`
+        return [
+          ...c,
+          { key, id: product.id, name: product.name, price: effectivePrice(product), image: product.image, qty: 1, stock: product.stock || 9999, note: note || null },
+        ]
       }
-      return [...c, { id: product.id, name: product.name, price: effectivePrice(product), image: product.image, qty: 1, stock: product.stock }]
+      const existing = c.find((i) => i.id === product.id && !i.note)
+      if (existing) {
+        return c.map((i) => (i.key === existing.key ? { ...i, qty: Math.min(i.qty + 1, product.stock) } : i))
+      }
+      return [...c, { key: product.id, id: product.id, name: product.name, price: effectivePrice(product), image: product.image, qty: 1, stock: product.stock, note: null }]
     })
   }
 
-  function changeQty(id, qty) {
-    setCart((c) => c.map((i) => (i.id === id ? { ...i, qty } : i)).filter((i) => i.qty > 0))
+  function changeQty(key, qty) {
+    setCart((c) => c.map((i) => ((i.key || i.id) === key ? { ...i, qty } : i)).filter((i) => i.qty > 0))
   }
 
-  function removeFromCart(id) {
-    setCart((c) => c.filter((i) => i.id !== id))
+  function removeFromCart(key) {
+    setCart((c) => c.filter((i) => (i.key || i.id) !== key))
   }
 
   function toggleFavorite(id) {
@@ -379,6 +387,7 @@ function ProductCard({ product: p, currency, onAdd, isFav, onToggleFav }) {
     <a className="product-card" href={`#product/${p.id}`}>
       <div className="product-image">
         {isOnSale(p) && <span className="sale-badge">-{discountPercent(p)}%</span>}
+        {p.custom && <span className="custom-badge">★ По заявка</span>}
         {isUrl(p.image) ? <img src={p.image} alt={p.name} /> : <span className="emoji">{p.image || '📦'}</span>}
         <button
           className={isFav ? 'fav-btn active' : 'fav-btn'}
@@ -581,20 +590,21 @@ function CartPage({ settings, customer, cart, changeQty, removeFromCart, clearCa
         <>
           <div className="cart-items">
             {cart.map((i) => (
-              <div className="cart-item" key={i.id}>
+              <div className="cart-item" key={i.key || i.id}>
                 <span className="emoji">{isUrl(i.image) ? <img src={i.image} alt="" /> : i.image}</span>
                 <div className="cart-item-info">
                   <span>{i.name}</span>
                   <small>{money(i.price, currency)}</small>
+                  {i.note && <small className="cart-note">Заявка: {i.note}</small>}
                 </div>
                 <input
                   type="number"
                   min="1"
                   max={i.stock}
                   value={i.qty}
-                  onChange={(e) => changeQty(i.id, Math.max(1, Math.min(Number(e.target.value) || 1, i.stock)))}
+                  onChange={(e) => changeQty(i.key || i.id, Math.max(1, Math.min(Number(e.target.value) || 1, i.stock)))}
                 />
-                <button className="icon-btn" onClick={() => removeFromCart(i.id)}>
+                <button className="icon-btn" onClick={() => removeFromCart(i.key || i.id)}>
                   <X size={16} />
                 </button>
               </div>
@@ -955,6 +965,7 @@ function MyOrders({ token, currency }) {
               {(o.items || []).map((it, idx) => (
                 <li key={idx}>
                   {it.qty} × {it.name} — {money(it.price * it.qty, o.currency || currency)}
+                  {it.note && <span className="item-note"> · Заявка: {it.note}</span>}
                 </li>
               ))}
             </ul>
@@ -981,6 +992,8 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
   const [product, setProduct] = useState(null)
   const [loading, setLoading] = useState(true)
   const [added, setAdded] = useState(false)
+  const [mainIdx, setMainIdx] = useState(0)
+  const [note, setNote] = useState('')
 
   useEffect(() => {
     let active = true
@@ -1009,57 +1022,93 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
           Продуктът не е намерен. <a href="#">Обратно към магазина</a>
         </p>
       ) : (
-        <div className="product-page">
-          <div className="product-page-image">
-            {isOnSale(product) && <span className="sale-badge">-{discountPercent(product)}%</span>}
-            {isUrl(product.image) ? (
-              <img src={product.image} alt={product.name} />
-            ) : (
-              <span className="emoji">{product.image || '📦'}</span>
-            )}
-          </div>
-          <div className="product-page-info">
-            <div className="product-page-title">
-              <h1>{product.name}</h1>
-              <button
-                className={isFav ? 'fav-btn active' : 'fav-btn'}
-                title={isFav ? 'Премахни от любими' : 'Добави в любими'}
-                aria-label="Любими"
-                onClick={() => toggleFavorite(product.id)}
-              >
-                <Heart size={22} fill={isFav ? 'currentColor' : 'none'} />
-              </button>
-            </div>
-            {product.category && <span className="product-detail-category">{product.category}</span>}
-            {isOnSale(product) ? (
-              <div className="product-detail-price">
-                <s className="old-price">{money(product.price, currency)}</s>{' '}
-                <span className="sale-price">{money(product.sale_price, currency)}</span>
+        (() => {
+          const gallery = Array.isArray(product.images) && product.images.length ? product.images : isUrl(product.image) ? [product.image] : []
+          const shown = gallery[mainIdx] || gallery[0]
+          const canAdd = product.custom ? note.trim().length > 0 : product.stock > 0
+          return (
+            <div className="product-page">
+              <div>
+                <div className="product-page-image">
+                  {isOnSale(product) && <span className="sale-badge">-{discountPercent(product)}%</span>}
+                  {product.custom && <span className="custom-badge">★ По заявка</span>}
+                  {shown ? <img src={shown} alt={product.name} /> : <span className="emoji">{product.image || '📦'}</span>}
+                </div>
+                {gallery.length > 1 && (
+                  <div className="gallery-thumbs">
+                    {gallery.map((url, idx) => (
+                      <button
+                        key={url}
+                        className={idx === mainIdx ? 'gthumb active' : 'gthumb'}
+                        onClick={() => setMainIdx(idx)}
+                        type="button"
+                      >
+                        <img src={url} alt="" />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="product-detail-price">{money(product.price, currency)}</div>
-            )}
-            <p className={product.stock > 0 ? 'product-detail-stock' : 'product-detail-stock out'}>
-              {product.stock > 0 ? `Налични: ${product.stock} бр.` : 'Изчерпан'}
-            </p>
-            {product.description && <p className="product-detail-desc">{product.description}</p>}
-            <button
-              className="primary"
-              disabled={product.stock <= 0}
-              onClick={() => {
-                addToCart(product)
-                setAdded(true)
-              }}
-            >
-              {product.stock <= 0 ? 'Изчерпан' : 'Добави в количката'}
-            </button>
-            {added && (
-              <p className="added-msg">
-                Добавено в количката! <a href="#cart">Виж количката →</a>
-              </p>
-            )}
-          </div>
-        </div>
+              <div className="product-page-info">
+                <div className="product-page-title">
+                  <h1>{product.name}</h1>
+                  <button
+                    className={isFav ? 'fav-btn active' : 'fav-btn'}
+                    title={isFav ? 'Премахни от любими' : 'Добави в любими'}
+                    aria-label="Любими"
+                    onClick={() => toggleFavorite(product.id)}
+                  >
+                    <Heart size={22} fill={isFav ? 'currentColor' : 'none'} />
+                  </button>
+                </div>
+                {product.category && <span className="product-detail-category">{product.category}</span>}
+                {isOnSale(product) ? (
+                  <div className="product-detail-price">
+                    <s className="old-price">{money(product.price, currency)}</s>{' '}
+                    <span className="sale-price">{money(product.sale_price, currency)}</span>
+                  </div>
+                ) : (
+                  <div className="product-detail-price">{money(product.price, currency)}</div>
+                )}
+                {!product.custom && (
+                  <p className={product.stock > 0 ? 'product-detail-stock' : 'product-detail-stock out'}>
+                    {product.stock > 0 ? `Налични: ${product.stock} бр.` : 'Изчерпан'}
+                  </p>
+                )}
+                {product.description && <p className="product-detail-desc">{product.description}</p>}
+
+                {product.custom && (
+                  <label className="custom-req">
+                    Опиши какво искаш да ти направя (по заявка)
+                    <textarea
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="напр. фигурка 10см, син цвят, с надпис..."
+                    />
+                  </label>
+                )}
+
+                <button
+                  className="primary"
+                  disabled={!canAdd}
+                  onClick={() => {
+                    addToCart(product, product.custom ? note.trim() : undefined)
+                    setAdded(true)
+                    setNote('')
+                  }}
+                >
+                  {product.custom ? 'Добави заявката в количката' : product.stock <= 0 ? 'Изчерпан' : 'Добави в количката'}
+                </button>
+                {product.custom && !note.trim() && <p className="hint">Опиши заявката, за да продължиш.</p>}
+                {added && (
+                  <p className="added-msg">
+                    Добавено в количката! <a href="#cart">Виж количката →</a>
+                  </p>
+                )}
+              </div>
+            </div>
+          )
+        })()
       )}
 
       {product && <Reviews productId={product.id} customer={customer} />}
@@ -1327,6 +1376,24 @@ function Orders({ token }) {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [drafts, setDrafts] = useState({})
+  const [sent, setSent] = useState({})
+  const [sendingMsg, setSendingMsg] = useState(null)
+
+  async function messageCustomer(o) {
+    const text = (drafts[o.id] || '').trim()
+    if (!text) return
+    setSendingMsg(o.id)
+    try {
+      await createMessage({ user_id: o.user_id, body: `Относно поръчка от ${formatDate(o.created_at)}:\n${text}`, sender: 'admin' }, token)
+      setDrafts((d) => ({ ...d, [o.id]: '' }))
+      setSent((s) => ({ ...s, [o.id]: true }))
+    } catch {
+      setError('Съобщението не се изпрати.')
+    } finally {
+      setSendingMsg(null)
+    }
+  }
 
   useEffect(() => {
     load()
@@ -1388,6 +1455,7 @@ function Orders({ token }) {
             {(o.items || []).map((it, idx) => (
               <li key={idx}>
                 {it.qty} × {it.name} — {money(it.price * it.qty, o.currency)}
+                {it.note && <span className="item-note"> · Заявка: {it.note}</span>}
               </li>
             ))}
           </ul>
@@ -1407,6 +1475,32 @@ function Orders({ token }) {
               </button>
             </div>
           </div>
+
+          {o.user_id ? (
+            <form
+              className="order-msg"
+              onSubmit={(e) => {
+                e.preventDefault()
+                messageCustomer(o)
+              }}
+            >
+              <textarea
+                value={drafts[o.id] || ''}
+                onChange={(e) => setDrafts((d) => ({ ...d, [o.id]: e.target.value }))}
+                placeholder="Съобщение до клиента за тази поръчка..."
+              />
+              <div className="order-msg-row">
+                {sent[o.id] && <span className="hint">Изпратено ✓</span>}
+                <button className="primary" type="submit" disabled={sendingMsg === o.id}>
+                  {sendingMsg === o.id ? 'Изпращане...' : 'Пиши на клиента'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <p className="hint order-msg-guest">
+              Гост-поръчка — свържи се по телефон: <a href={`tel:${(o.customer_phone || '').replace(/\s+/g, '')}`}>{o.customer_phone}</a>
+            </p>
+          )}
         </div>
       ))}
     </div>
@@ -1661,6 +1755,8 @@ function ProductForm({ product, token, onSave, onCancel }) {
     sale_price: product.sale_price ?? '',
     category: product.category || '',
     image: product.image || '',
+    images: Array.isArray(product.images) && product.images.length ? product.images : isUrl(product.image) ? [product.image] : [],
+    custom: !!product.custom,
     stock: product.stock ?? 0,
     description: product.description || '',
   })
@@ -1672,20 +1768,25 @@ function ProductForm({ product, token, onSave, onCancel }) {
     setForm((f) => ({ ...f, [field]: value }))
   }
 
-  async function handleFile(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
+  async function handleFiles(e) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
     setUploading(true)
     setError('')
     try {
-      const url = await uploadProductImage(token, file)
-      update('image', url)
+      const urls = []
+      for (const file of files) urls.push(await uploadProductImage(token, file))
+      setForm((f) => ({ ...f, images: [...f.images, ...urls] }))
     } catch {
-      setError('Неуспешно качване на снимката.')
+      setError('Неуспешно качване на снимка.')
     } finally {
       setUploading(false)
       e.target.value = ''
     }
+  }
+
+  function removeImage(url) {
+    setForm((f) => ({ ...f, images: f.images.filter((u) => u !== url) }))
   }
 
   async function submit(e) {
@@ -1703,7 +1804,9 @@ function ProductForm({ product, token, onSave, onCancel }) {
         price: Number(form.price),
         sale_price: form.sale_price === '' || form.sale_price === null ? null : Number(form.sale_price),
         category: form.category || null,
-        image: form.image || '📦',
+        image: form.images[0] || form.image || '📦',
+        images: form.images,
+        custom: form.custom,
         stock: Number(form.stock) || 0,
         description: form.description || null,
       })
@@ -1740,16 +1843,39 @@ function ProductForm({ product, token, onSave, onCancel }) {
         <input value={form.category} onChange={(e) => update('category', e.target.value)} />
       </label>
       <label>
-        Снимка (емоджи или URL)
+        Емоджи или URL (ако няма качени снимки)
         <input value={form.image} onChange={(e) => update('image', e.target.value)} placeholder="📦 или https://..." />
       </label>
       <div className="image-upload">
         <label className="upload-btn">
-          {uploading ? 'Качване...' : 'Качи снимка от устройство'}
-          <input type="file" accept="image/*" onChange={handleFile} disabled={uploading} hidden />
+          {uploading ? 'Качване...' : 'Качи снимки от устройство'}
+          <input type="file" accept="image/*" multiple onChange={handleFiles} disabled={uploading} hidden />
         </label>
-        {isUrl(form.image) && <img className="image-preview" src={form.image} alt="Преглед" />}
       </div>
+      {form.images.length > 0 && (
+        <div className="image-gallery-edit">
+          {form.images.map((url, idx) => (
+            <div className="thumb" key={url}>
+              <img src={url} alt="" />
+              {idx === 0 && <span className="thumb-main">Главна</span>}
+              <button type="button" className="thumb-del" onClick={() => removeImage(url)} aria-label="Премахни">
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <label className="custom-toggle">
+        <button
+          type="button"
+          className={form.custom ? 'star-btn on' : 'star-btn'}
+          onClick={() => update('custom', !form.custom)}
+          aria-label="Поръчка по заявка"
+        >
+          ★
+        </button>
+        Поръчка по заявка (клиентът пише какво иска да му направиш)
+      </label>
       <label>
         Наличност
         <input type="number" min="0" value={form.stock} onChange={(e) => update('stock', e.target.value)} />
@@ -1891,7 +2017,7 @@ function Checkout({ cart, total, currency, onComplete, customerToken }) {
           customer_city: form.city,
           customer_address: form.address,
           notes: form.notes || null,
-          items: cart.map((i) => ({ id: i.id, name: i.name, price: i.price, qty: i.qty })),
+          items: cart.map((i) => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, note: i.note || null })),
           total,
           currency,
           payment: 'Наложен платеж',
@@ -2302,6 +2428,39 @@ function Style() {
       .review-body { margin: 6px 0; line-height: 1.5; white-space: pre-wrap; }
       .review-meta { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 0.8rem; }
       .review-del { background: none; border: none; color: var(--danger); font-size: 0.8rem; padding: 0; }
+
+      .custom-badge {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        z-index: 1;
+        background: #7c3aed;
+        color: #fff;
+        font-size: 0.72rem;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 999px;
+      }
+      .product-page-image .custom-badge { top: 8px; left: 8px; }
+      .gallery-thumbs { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+      .gthumb { width: 60px; height: 60px; border: 2px solid var(--border); border-radius: 8px; overflow: hidden; padding: 0; background: var(--bg); }
+      .gthumb.active { border-color: var(--accent); }
+      .gthumb img { width: 100%; height: 100%; object-fit: cover; }
+      .image-gallery-edit { display: flex; gap: 10px; flex-wrap: wrap; }
+      .thumb { position: relative; width: 72px; height: 72px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+      .thumb img { width: 100%; height: 100%; object-fit: cover; }
+      .thumb-del {
+        position: absolute; top: 2px; right: 2px;
+        width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+        background: rgba(0,0,0,0.6); color: #fff; border: none; border-radius: 999px;
+      }
+      .thumb-main { position: absolute; bottom: 0; left: 0; right: 0; background: var(--accent); color: #fff; font-size: 0.6rem; text-align: center; }
+      .custom-toggle { flex-direction: row; align-items: center; gap: 8px; }
+      .star-btn { width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--border); font-size: 1.1rem; }
+      .star-btn.on { color: #f5a623; border-color: #f5a623; }
+      .custom-req textarea { min-height: 70px; }
+      .cart-note { color: #7c3aed; }
+      .item-note { color: #7c3aed; }
       .product-footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
       .product-footer button {
         background: var(--accent);
@@ -2540,6 +2699,10 @@ function Style() {
         font-size: 0.85rem;
       }
       .order-cancel:disabled { opacity: 0.6; }
+      .order-msg { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+      .order-msg textarea { min-height: 54px; }
+      .order-msg-row { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+      .order-msg-guest { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 
       @media (max-width: 640px) {
         .shop-header { flex-direction: column; }
