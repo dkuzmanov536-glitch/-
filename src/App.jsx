@@ -164,6 +164,7 @@ const updateSettings = (token, patch) =>
 // Съобщения „Свържи се с продавача“ (клиентът пише, админът чете)
 const createMessage = (msg, token) => rest('messages', { method: 'POST', token, body: msg, headers: { Prefer: 'return=minimal' } })
 const getMessages = (token) => rest('messages?select=*&order=created_at.desc', { token })
+const getThread = (token) => rest('messages?select=*&order=created_at.asc', { token })
 const markMessage = (token, id, handled) =>
   rest(`messages?id=eq.${id}`, { method: 'PATCH', token, body: { handled }, headers: { Prefer: 'return=representation' } }).then((r) => r[0])
 const deleteMessage = (token, id) => rest(`messages?id=eq.${id}`, { method: 'DELETE', token })
@@ -610,7 +611,8 @@ function ProfilePage({ settings, customer, onAuth, onLogout }) {
           </button>
         </div>
         <MyOrders token={customer.token} currency={settings?.currency} />
-        <SellerContact settings={settings} customer={customer} />
+        <SellerChat customer={customer} />
+        <ContactDetails settings={settings} />
       </div>
     )
   }
@@ -624,6 +626,99 @@ function ProfilePage({ settings, customer, onAuth, onLogout }) {
       </header>
       <CustomerAuth onAuth={onAuth} />
       <SellerContact settings={settings} customer={customer} />
+    </div>
+  )
+}
+
+function ContactDetails({ settings }) {
+  const phone = settings?.contact_phone
+  const email = settings?.contact_email
+  const note = settings?.contact_note
+  if (!phone && !email && !note) return null
+  return (
+    <div className="seller-contact contact-only">
+      <h2>Данни за контакт</h2>
+      {phone && (
+        <p>
+          <span className="contact-label">Телефон:</span> <a href={`tel:${phone.replace(/\s+/g, '')}`}>{phone}</a>
+        </p>
+      )}
+      {email && (
+        <p>
+          <span className="contact-label">Имейл:</span> <a href={`mailto:${email}`}>{email}</a>
+        </p>
+      )}
+      {note && <p className="contact-note">{note}</p>}
+    </div>
+  )
+}
+
+function SellerChat({ customer }) {
+  const [messages, setMessages] = useState(null)
+  const [body, setBody] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState('')
+
+  function load() {
+    return getThread(customer.token)
+      .then((m) => setMessages(m || []))
+      .catch(() => setError('Неуспешно зареждане на съобщенията.'))
+  }
+
+  useEffect(() => {
+    load()
+    const onFocus = () => !document.hidden && load()
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function send(e) {
+    e.preventDefault()
+    if (!body.trim()) return
+    setSending(true)
+    setError('')
+    try {
+      const msg = { body: body.trim(), email: customer.email }
+      await createMessage(msg, customer.token)
+      notifyFormspree({ name: customer.email, email: customer.email, body: msg.body })
+      setBody('')
+      await load()
+    } catch (err) {
+      setError('Съобщението не се изпрати. ' + (err?.message || '').slice(0, 150))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="seller-contact">
+      <h2>Съобщения с продавача</h2>
+      <div className="chat-thread">
+        {messages === null ? (
+          <p className="hint">Зареждане...</p>
+        ) : messages.length === 0 ? (
+          <p className="hint">Напиши първото си съобщение до продавача.</p>
+        ) : (
+          messages.map((m) => (
+            <div key={m.id} className={m.sender === 'admin' ? 'chat-msg from-admin' : 'chat-msg from-me'}>
+              <p className="chat-body">{m.body}</p>
+              <span className="chat-time">{formatDate(m.created_at)}</span>
+            </div>
+          ))
+        )}
+      </div>
+      <form className="chat-input" onSubmit={send}>
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Напиши съобщение..." required />
+        {error && <p className="error">{error}</p>}
+        <button className="primary" type="submit" disabled={sending}>
+          {sending ? 'Изпращане...' : 'Изпрати'}
+        </button>
+      </form>
     </div>
   )
 }
@@ -1146,36 +1241,46 @@ function Orders({ token }) {
 function Messages({ token }) {
   const [messages, setMessages] = useState(null)
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState(null)
+  const [drafts, setDrafts] = useState({})
+  const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    getMessages(token)
+  function load() {
+    return getMessages(token)
       .then((m) => setMessages(m || []))
       .catch(() => setError('Неуспешно зареждане на съобщенията.'))
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
-  async function toggle(id, handled) {
-    setBusy(id)
+  async function reply(userId, key) {
+    const text = (drafts[key] || '').trim()
+    if (!text) return
+    setBusy(true)
+    setError('')
     try {
-      const updated = await markMessage(token, id, handled)
-      setMessages((ms) => ms.map((m) => (m.id === id ? updated : m)))
+      await createMessage({ user_id: userId, body: text, sender: 'admin' }, token)
+      setDrafts((d) => ({ ...d, [key]: '' }))
+      await load()
     } catch {
-      setError('Неуспешна промяна.')
+      setError('Отговорът не се изпрати.')
     } finally {
-      setBusy(null)
+      setBusy(false)
     }
   }
 
-  async function remove(id) {
-    if (!window.confirm('Да изтрия ли това съобщение?')) return
-    setBusy(id)
+  async function removeConversation(ids) {
+    if (!window.confirm('Да изтрия ли целия разговор?')) return
+    setBusy(true)
     try {
-      await deleteMessage(token, id)
-      setMessages((ms) => ms.filter((m) => m.id !== id))
+      for (const id of ids) await deleteMessage(token, id)
+      await load()
     } catch {
       setError('Неуспешно изтриване.')
     } finally {
-      setBusy(null)
+      setBusy(false)
     }
   }
 
@@ -1183,39 +1288,76 @@ function Messages({ token }) {
   if (messages === null) return <p className="hint">Зареждане...</p>
   if (messages.length === 0) return <p className="hint">Все още няма съобщения.</p>
 
+  // Групиране в разговори по клиент (user_id), а гостите — по имейл/id.
+  const groups = {}
+  const order = []
+  for (const m of messages) {
+    const key = m.user_id ? `u:${m.user_id}` : `g:${m.email || m.id}`
+    if (!groups[key]) {
+      groups[key] = { key, userId: m.user_id || null, label: m.email || m.name || 'Гост', msgs: [] }
+      order.push(key)
+    }
+    groups[key].msgs.push(m)
+  }
+  // Съобщенията идват в низходящ ред; за нишката ги подреждаме възходящо.
+  for (const key of order) groups[key].msgs.sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+
   return (
     <div className="orders-list">
-      {messages.map((m) => (
-        <div className={m.handled ? 'order-card message-handled' : 'order-card'} key={m.id}>
-          <div className="order-card-header">
-            <div>
-              <strong>{m.name || m.email || 'Клиент'}</strong>
-              {m.email && <div className="hint">{m.email}</div>}
-            </div>
-            <span className="order-date">{formatDate(m.created_at)}</span>
-          </div>
-          <p className="message-body">{m.body}</p>
-          <div className="order-card-footer">
-            <label className="message-check">
-              <input type="checkbox" checked={m.handled} disabled={busy === m.id} onChange={(e) => toggle(m.id, e.target.checked)} />
-              Обработено
-            </label>
-            <div className="order-card-actions">
-              {m.email && (
-                <a
-                  className="message-reply"
-                  href={`mailto:${m.email}?subject=${encodeURIComponent('Отговор на вашето съобщение')}&body=${encodeURIComponent('\n\n----- Вашето съобщение -----\n' + m.body)}`}
-                >
-                  Отговори по имейл
-                </a>
-              )}
-              <button className="order-delete" onClick={() => remove(m.id)} disabled={busy === m.id} title="Изтрий" aria-label="Изтрий">
+      {order.map((key) => {
+        const conv = groups[key]
+        const ids = conv.msgs.map((m) => m.id)
+        return (
+          <div className="order-card" key={key}>
+            <div className="order-card-header">
+              <div>
+                <strong>{conv.label}</strong>
+                {!conv.userId && <div className="hint">гост (не може да получава отговори в сайта)</div>}
+              </div>
+              <button className="order-delete" onClick={() => removeConversation(ids)} disabled={busy} title="Изтрий разговора" aria-label="Изтрий">
                 <Trash2 size={16} />
               </button>
             </div>
+
+            <div className="chat-thread">
+              {conv.msgs.map((m) => (
+                <div key={m.id} className={m.sender === 'admin' ? 'chat-msg from-me' : 'chat-msg from-admin'}>
+                  <p className="chat-body">{m.body}</p>
+                  <span className="chat-time">{formatDate(m.created_at)}</span>
+                </div>
+              ))}
+            </div>
+
+            {conv.userId ? (
+              <form
+                className="chat-input"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  reply(conv.userId, key)
+                }}
+              >
+                <textarea
+                  value={drafts[key] || ''}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
+                  placeholder="Отговори на клиента..."
+                />
+                <button className="primary" type="submit" disabled={busy}>
+                  Отговори
+                </button>
+              </form>
+            ) : (
+              conv.label.includes('@') && (
+                <a
+                  className="message-reply"
+                  href={`mailto:${conv.label}?subject=${encodeURIComponent('Отговор на вашето съобщение')}`}
+                >
+                  Отговори по имейл
+                </a>
+              )
+            )}
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -1838,6 +1980,24 @@ function Style() {
         font-size: 0.85rem;
         font-weight: 600;
       }
+
+      .contact-only { margin-top: 16px; }
+      .chat-thread {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 340px;
+        overflow-y: auto;
+        padding: 4px 2px;
+        margin: 8px 0 12px;
+      }
+      .chat-msg { max-width: 80%; padding: 8px 12px; border-radius: 12px; }
+      .chat-msg .chat-body { margin: 0; white-space: pre-wrap; line-height: 1.4; }
+      .chat-msg .chat-time { display: block; margin-top: 4px; font-size: 0.7rem; opacity: 0.7; }
+      .chat-msg.from-me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+      .chat-msg.from-admin { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+      .chat-input { display: flex; flex-direction: column; gap: 8px; }
+      .chat-input textarea { min-height: 60px; }
 
       .categories { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
       .chip {
