@@ -106,7 +106,7 @@ async function uploadProductImage(token, file) {
   return `${SUPABASE_URL}/storage/v1/object/public/product-images/${path}`
 }
 
-function money(n, currency = 'лв.') {
+function money(n, currency = '€') {
   const num = Number(n) || 0
   return `${num.toFixed(2)} ${currency}`
 }
@@ -451,7 +451,7 @@ function Shop({ settings, addToCart, favorites, toggleFavorite }) {
     }
   }, [])
 
-  const currency = settings?.currency || 'лв.'
+  const currency = settings?.currency || '€'
   const categories = ['всички', ...new Set(products.map((p) => p.category).filter(Boolean))]
   const filtered = category === 'всички' ? products : products.filter((p) => p.category === category)
 
@@ -518,7 +518,7 @@ function FavoritesPage({ settings, addToCart, favorites, toggleFavorite }) {
     }
   }, [])
 
-  const currency = settings?.currency || 'лв.'
+  const currency = settings?.currency || '€'
   const favProducts = products.filter((p) => favorites.includes(p.id))
 
   return (
@@ -557,7 +557,7 @@ function FavoritesPage({ settings, addToCart, favorites, toggleFavorite }) {
 
 function CartPage({ settings, customer, cart, changeQty, removeFromCart, clearCart }) {
   const [checkoutOpen, setCheckoutOpen] = useState(false)
-  const currency = settings?.currency || 'лв.'
+  const currency = settings?.currency || '€'
   const total = cart.reduce((sum, i) => sum + i.price * i.qty, 0)
 
   function handleOrderComplete() {
@@ -991,7 +991,7 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
       .finally(() => active && setLoading(false))
   }, [productId])
 
-  const currency = settings?.currency || 'лв.'
+  const currency = settings?.currency || '€'
   const isFav = product && favorites.includes(product.id)
 
   return (
@@ -1779,7 +1779,7 @@ function SettingsPanel({ token, settings, onChange }) {
   const [form, setForm] = useState({
     shop_name: settings?.shop_name || '',
     tagline: settings?.tagline || '',
-    currency: settings?.currency || 'лв.',
+    currency: settings?.currency || '€',
     contact_phone: settings?.contact_phone || '',
     contact_email: settings?.contact_email || '',
     contact_note: settings?.contact_note || '',
@@ -1793,7 +1793,7 @@ function SettingsPanel({ token, settings, onChange }) {
       setForm({
         shop_name: settings.shop_name || '',
         tagline: settings.tagline || '',
-        currency: settings.currency || 'лв.',
+        currency: settings.currency || '€',
         contact_phone: settings.contact_phone || '',
         contact_email: settings.contact_email || '',
         contact_note: settings.contact_note || '',
