@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Eye, EyeOff, Heart, Home, Pencil, Plus, Settings, ShoppingCart, Trash2, User, X } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -191,6 +191,22 @@ const createMessage = (msg, token) => rest('messages', { method: 'POST', token, 
 const getMessages = (token) => rest('messages?select=*&order=created_at.desc', { token })
 const getThread = (token) => rest('messages?select=*&order=created_at.asc', { token })
 
+// Синхронизация на количка/любими към акаунта (между устройства)
+const getUserData = (token) => rest('user_data?select=cart,favorites', { token }).then((r) => r && r[0])
+const saveUserData = (token, userId, cart, favorites) =>
+  rest('user_data?on_conflict=user_id', {
+    method: 'POST',
+    token,
+    body: { user_id: userId, cart, favorites, updated_at: new Date().toISOString() },
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+  })
+
+function mergeCarts(local, server) {
+  const map = new Map()
+  for (const it of [...(server || []), ...(local || [])]) map.set(it.key || it.id, it)
+  return Array.from(map.values())
+}
+
 // Отзиви
 const getReviews = (productId) => rest(`reviews?select=*&product_id=eq.${productId}&order=created_at.desc`)
 const createReview = (token, review) =>
@@ -248,6 +264,7 @@ export default function App() {
       return []
     }
   })
+  const syncedFor = useRef(null)
 
   useEffect(() => {
     const onHashChange = () => setRoute(parseRoute())
@@ -281,6 +298,33 @@ export default function App() {
       })
   }, [])
 
+  // При вход: сливаме количката/любимите от акаунта (синхрон между устройства).
+  useEffect(() => {
+    if (!customer?.token || !customer?.id) return
+    if (syncedFor.current === customer.id) return
+    let active = true
+    getUserData(customer.token)
+      .then((row) => {
+        if (!active) return
+        setCart((local) => mergeCarts(local, row?.cart || []))
+        setFavorites((local) => Array.from(new Set([...(local || []), ...(row?.favorites || [])])))
+        syncedFor.current = customer.id
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [customer])
+
+  // Докато клиентът е логнат — записваме промените в акаунта му.
+  useEffect(() => {
+    if (!customer?.token || !customer?.id || syncedFor.current !== customer.id) return
+    const t = setTimeout(() => {
+      saveUserData(customer.token, customer.id, cart, favorites).catch(() => {})
+    }, 700)
+    return () => clearTimeout(t)
+  }, [cart, favorites, customer])
+
   function handleLogin(data) {
     setSession({ token: data.access_token, email: data.user?.email })
   }
@@ -296,6 +340,10 @@ export default function App() {
   function handleCustomerLogout() {
     clearCustomer()
     setCustomer(null)
+    syncedFor.current = null
+    // Изчистваме локалната количка/любими, за да не се смесват с друг акаунт на същото устройство.
+    setCart([])
+    setFavorites([])
   }
 
   function addToCart(product, note) {
