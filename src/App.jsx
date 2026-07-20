@@ -233,7 +233,7 @@ async function notifyFormspree(msg) {
         name: msg.name || 'Клиент',
         email: msg.email || '',
         message: msg.body,
-        _subject: 'Ново съобщение от магазина',
+        _subject: msg.subject || 'Ново съобщение от магазина',
       }),
     })
   } catch {
@@ -2083,6 +2083,17 @@ function Checkout({ cart, total, currency, onComplete, customerToken }) {
         },
         customerToken,
       )
+      const summary = cart
+        .map((i) => `${i.qty} × ${i.name}${i.note ? ` (Заявка: ${i.note})` : ''} — ${money(i.price * i.qty, currency)}`)
+        .join('\n')
+      notifyFormspree({
+        subject: 'Нова поръчка от магазина',
+        name: form.name,
+        email: '',
+        body: `НОВА ПОРЪЧКА\nКлиент: ${form.name}\nТелефон: ${form.phone}\nАдрес: ${form.city}, ${form.address}\n${
+          form.notes ? `Бележка: ${form.notes}\n` : ''
+        }\n${summary}\n\nОбщо: ${money(total, currency)}\nПлащане: Наложен платеж`,
+      })
       onComplete()
     } catch (err) {
       const detail = (err?.message || '').slice(0, 300)
