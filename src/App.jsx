@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Heart, Home, Pencil, Plus, Settings, ShoppingCart, Trash2, User, X } from 'lucide-react'
+import { Eye, EyeOff, Heart, Home, Pencil, Plus, Settings, ShoppingCart, Trash2, User, X } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Supabase (директен REST достъп, без @supabase/supabase-js)
@@ -116,6 +116,18 @@ function isUrl(value) {
 }
 
 const ADMIN_EMAIL = 'dimitrkuzmanov3@gmail.com'
+
+function PasswordInput(props) {
+  const [show, setShow] = useState(false)
+  return (
+    <div className="pw-field">
+      <input {...props} type={show ? 'text' : 'password'} />
+      <button type="button" className="pw-eye" onClick={() => setShow((s) => !s)} aria-label={show ? 'Скрий паролата' : 'Покажи паролата'}>
+        {show ? <EyeOff size={18} /> : <Eye size={18} />}
+      </button>
+    </div>
+  )
+}
 
 function isOnSale(p) {
   return p && p.sale_price != null && Number(p.sale_price) > 0 && Number(p.sale_price) < Number(p.price)
@@ -901,7 +913,7 @@ function CustomerAuth({ onAuth }) {
         </label>
         <label>
           Парола
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
+          <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
         </label>
         {error && <p className="error">{error}</p>}
         {info && <p className="hint">{info}</p>}
@@ -1300,8 +1312,7 @@ function AuthGate({ onLogin }) {
         </label>
         <label>
           Парола
-          <input
-            type="password"
+          <PasswordInput
             name="admin-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -2578,6 +2589,25 @@ function Style() {
         color: var(--text);
       }
       textarea { resize: vertical; min-height: 60px; }
+
+      .pw-field { position: relative; display: flex; }
+      .pw-field input { flex: 1; padding-right: 42px; width: 100%; }
+      .pw-eye {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        background: none;
+        border: none;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .pw-eye:hover { color: var(--accent); }
 
       .image-upload { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
       .upload-btn {
