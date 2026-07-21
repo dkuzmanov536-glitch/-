@@ -265,6 +265,7 @@ export default function App() {
     }
   })
   const syncedFor = useRef(null)
+  const refreshingRef = useRef(false)
 
   useEffect(() => {
     const onHashChange = () => setRoute(parseRoute())
@@ -286,16 +287,40 @@ export default function App() {
     localStorage.setItem(FAV_KEY, JSON.stringify(favorites))
   }, [favorites])
 
-  // Подновяване на клиентската сесия при отваряне.
+  // Подновяване на клиентската сесия — при отваряне, периодично и при връщане към таба,
+  // за да не изтича JWT (токенът важи ~1 час).
   useEffect(() => {
-    const stored = loadCustomer()
-    if (!stored?.refresh_token) return
-    refreshSession(stored.refresh_token)
-      .then((data) => setCustomer(saveCustomer(data)))
-      .catch(() => {
-        clearCustomer()
-        setCustomer(null)
-      })
+    let active = true
+    async function refreshCustomerToken(logoutOnFail) {
+      if (refreshingRef.current) return
+      const stored = loadCustomer()
+      if (!stored?.refresh_token) return
+      refreshingRef.current = true
+      try {
+        const data = await refreshSession(stored.refresh_token)
+        if (active) setCustomer(saveCustomer(data))
+      } catch {
+        if (logoutOnFail && active) {
+          clearCustomer()
+          setCustomer(null)
+          syncedFor.current = null
+        }
+      } finally {
+        refreshingRef.current = false
+      }
+    }
+
+    refreshCustomerToken(true) // при отваряне
+    const interval = setInterval(() => refreshCustomerToken(false), 45 * 60 * 1000) // на всеки 45 мин
+    const onFocus = () => !document.hidden && refreshCustomerToken(false)
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      active = false
+      clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
   }, [])
 
   // При вход: сливаме количката/любимите от акаунта (синхрон между устройства).
