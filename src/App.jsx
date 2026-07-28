@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Eye, EyeOff, Heart, Home, Pencil, Plus, Settings, ShoppingCart, Trash2, User, X } from 'lucide-react'
+import { Eye, EyeOff, Heart, Home, Pencil, Plus, RotateCw, Settings, ShoppingCart, Trash2, User, X } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Supabase (директен REST достъп, без @supabase/supabase-js)
@@ -452,6 +452,9 @@ export default function App() {
       ) : (
         <Shop settings={settings} addToCart={addToCart} {...favProps} />
       )}
+      <button className="refresh-fab" onClick={() => window.location.reload()} title="Обнови" aria-label="Обнови">
+        <RotateCw size={20} />
+      </button>
       <BottomNav active={route.name} cartCount={cartCount} favCount={favorites.length} />
     </>
   )
@@ -2422,6 +2425,25 @@ function Style() {
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
       }
       .admin-fab:hover { color: var(--accent); border-color: var(--accent); }
+
+      .refresh-fab {
+        position: fixed;
+        right: 20px;
+        bottom: 84px;
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        color: var(--muted);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+      }
+      .refresh-fab:hover { color: var(--accent); border-color: var(--accent); }
+      .refresh-fab:active { transform: rotate(180deg); transition: transform 0.3s; }
 
       .bottom-nav {
         position: fixed;
