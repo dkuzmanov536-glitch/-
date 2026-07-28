@@ -371,21 +371,21 @@ export default function App() {
     setFavorites([])
   }
 
-  function addToCart(product, note) {
+  function addToCart(product, note, variant) {
     setCart((c) => {
+      const base = { id: product.id, name: product.name, price: effectivePrice(product), image: product.image, variant: variant || null }
       // Поръчка по заявка: винаги нов ред със своя бележка (не се слива).
       if (product.custom || note) {
         const key = `${product.id}:${Date.now()}:${Math.random().toString(36).slice(2)}`
-        return [
-          ...c,
-          { key, id: product.id, name: product.name, price: effectivePrice(product), image: product.image, qty: 1, stock: product.stock || 9999, note: note || null },
-        ]
+        return [...c, { key, ...base, qty: 1, stock: product.stock || 9999, note: note || null }]
       }
-      const existing = c.find((i) => i.id === product.id && !i.note)
+      // Различен избран дизайн/цвят = отделен ред.
+      const key = variant ? `${product.id}::${variant}` : product.id
+      const existing = c.find((i) => (i.key || i.id) === key && !i.note)
       if (existing) {
         return c.map((i) => (i.key === existing.key ? { ...i, qty: Math.min(i.qty + 1, product.stock) } : i))
       }
-      return [...c, { key: product.id, id: product.id, name: product.name, price: effectivePrice(product), image: product.image, qty: 1, stock: product.stock, note: null }]
+      return [...c, { key, ...base, qty: 1, stock: product.stock, note: null }]
     })
   }
 
@@ -680,6 +680,7 @@ function CartPage({ settings, customer, cart, changeQty, removeFromCart, clearCa
                 <div className="cart-item-info">
                   <span>{i.name}</span>
                   <small>{money(i.price, currency)}</small>
+                  {i.variant && <small className="cart-variant">Дизайн: {i.variant}</small>}
                   {i.note && <small className="cart-note">Заявка: {i.note}</small>}
                 </div>
                 <input
@@ -1050,6 +1051,7 @@ function MyOrders({ token, currency }) {
               {(o.items || []).map((it, idx) => (
                 <li key={idx}>
                   {it.qty} × {it.name} — {money(it.price * it.qty, o.currency || currency)}
+                  {it.variant && <span className="item-note"> · Дизайн: {it.variant}</span>}
                   {it.note && <span className="item-note"> · Заявка: {it.note}</span>}
                 </li>
               ))}
@@ -1079,6 +1081,7 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
   const [added, setAdded] = useState(false)
   const [mainIdx, setMainIdx] = useState(0)
   const [note, setNote] = useState('')
+  const [variant, setVariant] = useState('')
 
   useEffect(() => {
     let active = true
@@ -1110,7 +1113,9 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
         (() => {
           const gallery = Array.isArray(product.images) && product.images.length ? product.images : isUrl(product.image) ? [product.image] : []
           const shown = gallery[mainIdx] || gallery[0]
-          const canAdd = product.custom ? note.trim().length > 0 : product.stock > 0
+          const variants = Array.isArray(product.variants) ? product.variants : []
+          const chosen = variant || variants[0] || ''
+          const canAdd = (product.custom ? note.trim().length > 0 : product.stock > 0) && (variants.length === 0 || !!chosen)
           return (
             <div className="product-page">
               <div>
@@ -1162,6 +1167,24 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
                 )}
                 {product.description && <p className="product-detail-desc">{product.description}</p>}
 
+                {variants.length > 0 && (
+                  <div className="variant-pick">
+                    <span className="variant-pick-label">Дизайн / цвят:</span>
+                    <div className="variant-options">
+                      {variants.map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          className={chosen === v ? 'variant-opt active' : 'variant-opt'}
+                          onClick={() => setVariant(v)}
+                        >
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {product.custom && (
                   <label className="custom-req">
                     Опиши какво искаш да ти направя (по заявка)
@@ -1177,7 +1200,7 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
                   className="primary"
                   disabled={!canAdd}
                   onClick={() => {
-                    addToCart(product, product.custom ? note.trim() : undefined)
+                    addToCart(product, product.custom ? note.trim() : undefined, chosen || undefined)
                     setAdded(true)
                     setNote('')
                   }}
@@ -1539,6 +1562,7 @@ function Orders({ token }) {
             {(o.items || []).map((it, idx) => (
               <li key={idx}>
                 {it.qty} × {it.name} — {money(it.price * it.qty, o.currency)}
+                {it.variant && <span className="item-note"> · Дизайн: {it.variant}</span>}
                 {it.note && <span className="item-note"> · Заявка: {it.note}</span>}
               </li>
             ))}
@@ -1840,13 +1864,28 @@ function ProductForm({ product, token, onSave, onCancel }) {
     category: product.category || '',
     image: product.image || '',
     images: Array.isArray(product.images) && product.images.length ? product.images : isUrl(product.image) ? [product.image] : [],
+    variants: Array.isArray(product.variants) ? product.variants : [],
     custom: !!product.custom,
     stock: product.stock ?? 0,
     description: product.description || '',
   })
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [variantInput, setVariantInput] = useState('')
   const [error, setError] = useState('')
+
+  function addVariant() {
+    const v = variantInput.trim()
+    if (!v || form.variants.includes(v)) {
+      setVariantInput('')
+      return
+    }
+    setForm((f) => ({ ...f, variants: [...f.variants, v] }))
+    setVariantInput('')
+  }
+  function removeVariant(v) {
+    setForm((f) => ({ ...f, variants: f.variants.filter((x) => x !== v) }))
+  }
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
@@ -1890,6 +1929,7 @@ function ProductForm({ product, token, onSave, onCancel }) {
         category: form.category || null,
         image: form.images[0] || form.image || '📦',
         images: form.images,
+        variants: form.variants,
         custom: form.custom,
         stock: Number(form.stock) || 0,
         description: form.description || null,
@@ -1946,6 +1986,37 @@ function ProductForm({ product, token, onSave, onCancel }) {
                 <X size={14} />
               </button>
             </div>
+          ))}
+        </div>
+      )}
+      <label>
+        Дизайни / цветове (клиентът избира един при поръчка)
+        <div className="variant-add">
+          <input
+            value={variantInput}
+            onChange={(e) => setVariantInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                addVariant()
+              }
+            }}
+            placeholder="напр. Червен, Дърво, Матово..."
+          />
+          <button type="button" onClick={addVariant}>
+            Добави
+          </button>
+        </div>
+      </label>
+      {form.variants.length > 0 && (
+        <div className="variant-chips">
+          {form.variants.map((v) => (
+            <span className="variant-chip" key={v}>
+              {v}
+              <button type="button" onClick={() => removeVariant(v)} aria-label="Премахни">
+                <X size={13} />
+              </button>
+            </span>
           ))}
         </div>
       )}
@@ -2101,7 +2172,7 @@ function Checkout({ cart, total, currency, onComplete, customerToken }) {
           customer_city: form.city,
           customer_address: form.address,
           notes: form.notes || null,
-          items: cart.map((i) => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, note: i.note || null })),
+          items: cart.map((i) => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, variant: i.variant || null, note: i.note || null })),
           total,
           currency,
           payment: 'Наложен платеж',
@@ -2109,7 +2180,7 @@ function Checkout({ cart, total, currency, onComplete, customerToken }) {
         customerToken,
       )
       const summary = cart
-        .map((i) => `${i.qty} × ${i.name}${i.note ? ` (Заявка: ${i.note})` : ''} — ${money(i.price * i.qty, currency)}`)
+        .map((i) => `${i.qty} × ${i.name}${i.variant ? ` (Дизайн: ${i.variant})` : ''}${i.note ? ` (Заявка: ${i.note})` : ''} — ${money(i.price * i.qty, currency)}`)
         .join('\n')
       notifyFormspree({
         subject: 'Нова поръчка от магазина',
@@ -2554,6 +2625,18 @@ function Style() {
       .star-btn { width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--border); font-size: 1.1rem; }
       .star-btn.on { color: #f5a623; border-color: #f5a623; }
       .custom-req textarea { min-height: 70px; }
+      .variant-add { display: flex; gap: 8px; }
+      .variant-add input { flex: 1; }
+      .variant-add button { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0 14px; font-weight: 600; }
+      .variant-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+      .variant-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 4px 6px 4px 12px; font-size: 0.85rem; }
+      .variant-chip button { display: flex; background: none; border: none; color: var(--muted); padding: 0; }
+      .variant-pick { margin: 4px 0; }
+      .variant-pick-label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; }
+      .variant-options { display: flex; flex-wrap: wrap; gap: 8px; }
+      .variant-opt { background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 7px 14px; font-size: 0.9rem; font-weight: 500; }
+      .variant-opt.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+      .cart-variant { color: var(--accent); }
       .cart-note { color: #7c3aed; }
       .item-note { color: #7c3aed; }
       .product-footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }

@@ -53,8 +53,10 @@ npm run preview # преглед на билда
 ### Таблици
 
 - `products` — id, name, price, `sale_price` (промоцена; ако е под price → намаление), category,
-  image (главна: емоджи или URL), `images` (jsonb масив URL-и за галерия), `custom` (bool: поръчка по заявка),
-  stock, description, created_at. При `custom=true` клиентът пише текст-заявка (влиза в `items[].note`).
+  image (главна: емоджи или URL), `images` (jsonb масив URL-и за галерия),
+  `variants` (jsonb масив низове: дизайни/цветове за избор), `custom` (bool: поръчка по заявка),
+  stock, description, created_at. При `custom=true` клиентът пише текст-заявка (влиза в `items[].note`);
+  избраният вариант влиза в `items[].variant`.
   Админът пише на клиента за конкретна поръчка от таб „Поръчки“ (ако поръчката има `user_id`).
 - `reviews` — id, created_at, product_id, user_id, author_name, rating (1–5), body — отзиви за продукт;
   всеки чете, логнат клиент пише (само своя user_id), трие авторът или админът. Показват се на продуктовата страница.
