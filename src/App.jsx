@@ -156,28 +156,43 @@ function variantStock(p, name) {
   return v ? v.stock : null // null = без следене на наличност
 }
 
-// Сменя иконата на приложението (таб, apple-touch-icon, PWA манифест) от URL, зададен в Настройки —
-// без да е нужен нов деплой на кода.
-async function applyAppIcon(url) {
-  if (!url) return
-  const iconLink = document.querySelector('link[rel="icon"]')
-  if (iconLink) iconLink.href = url
-  const appleLink = document.querySelector('link[rel="apple-touch-icon"]')
-  if (appleLink) appleLink.href = url
+// Сменя иконата и името на приложението (таб, apple-touch-icon, PWA манифест) по настройките от админ
+// Настройки — без да е нужен нов деплой на кода. Забележка: вече ИНСТАЛИРАНО на началния екран приложение
+// не се обновява само (браузърите не опресняват иконата/името на инсталирано PWA) — нужно е да се
+// премахне и добави наново, за да се вземе новата икона/име.
+async function applyAppMeta(settings) {
+  const name = settings?.shop_name || 'Моят магазин'
+  const iconUrl = settings?.app_icon_url || ''
+
+  document.title = name
+
+  if (iconUrl) {
+    const iconLink = document.querySelector('link[rel="icon"]')
+    if (iconLink) iconLink.href = iconUrl
+    const appleLink = document.querySelector('link[rel="apple-touch-icon"]')
+    if (appleLink) appleLink.href = iconUrl
+  }
+
   try {
     const manifestLink = document.querySelector('link[rel="manifest"]')
     if (!manifestLink) return
-    const res = await fetch(manifestLink.href)
+    // Винаги четем от оригиналния статичен манифест, не от вече заменен blob href.
+    const manifestUrl = `${import.meta.env.BASE_URL}manifest.webmanifest`
+    const res = await fetch(manifestUrl)
     const manifest = await res.json()
-    manifest.icons = [
-      { src: url, sizes: '192x192', type: 'image/png', purpose: 'any' },
-      { src: url, sizes: '512x512', type: 'image/png', purpose: 'any' },
-      { src: url, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-    ]
+    manifest.name = name
+    manifest.short_name = name.length > 12 ? name.slice(0, 12) : name
+    if (iconUrl) {
+      manifest.icons = [
+        { src: iconUrl, sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: iconUrl, sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: iconUrl, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      ]
+    }
     const blob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' })
     manifestLink.href = URL.createObjectURL(blob)
   } catch {
-    // манифестът е второстепенен — фавиконът вече е сменен
+    // манифестът е второстепенен — фавиконът/заглавието вече са сменени
   }
 }
 
@@ -333,8 +348,8 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (settings?.app_icon_url) applyAppIcon(settings.app_icon_url)
-  }, [settings?.app_icon_url])
+    if (settings) applyAppMeta(settings)
+  }, [settings?.shop_name, settings?.app_icon_url])
 
   useEffect(() => {
     localStorage.setItem(CART_KEY, JSON.stringify(cart))
