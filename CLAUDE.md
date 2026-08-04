@@ -64,7 +64,9 @@ npm run preview # преглед на билда
   всеки чете, логнат клиент пише (само своя user_id), трие авторът или админът. Показват се на продуктовата страница.
 - `orders` — id, created_at, customer_name/phone/city/address, notes, items (jsonb), total, currency, payment, status,
   `user_id` (акаунт на клиента, `default auth.uid()`; null за анонимни поръчки)
-- `shop_settings` — един ред (id=1): shop_name, tagline, currency, contact_phone, contact_email, contact_note
+- `shop_settings` — един ред (id=1): shop_name, tagline, currency, contact_phone, contact_email, contact_note,
+  `auto_refresh` (bool, вкл. по подразбиране: автоматично презареждане на клиентските страници на всеки 30 сек.),
+  `app_icon_url` (URL на иконата на приложението — тав/PWA; сменя се от админ Настройки без нов деплой)
   (данните за контакт се въвеждат от админ Настройки и се показват в „Профил“ → „Свържи се с продавача“)
 - `user_data` — user_id (pk), cart (jsonb), favorites (jsonb), updated_at — синхронизира количката и
   любимите на логнат клиент между устройства (RLS: чете/пише само собственикът). Клиентската част

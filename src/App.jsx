@@ -156,6 +156,31 @@ function variantStock(p, name) {
   return v ? v.stock : null // null = без следене на наличност
 }
 
+// Сменя иконата на приложението (таб, apple-touch-icon, PWA манифест) от URL, зададен в Настройки —
+// без да е нужен нов деплой на кода.
+async function applyAppIcon(url) {
+  if (!url) return
+  const iconLink = document.querySelector('link[rel="icon"]')
+  if (iconLink) iconLink.href = url
+  const appleLink = document.querySelector('link[rel="apple-touch-icon"]')
+  if (appleLink) appleLink.href = url
+  try {
+    const manifestLink = document.querySelector('link[rel="manifest"]')
+    if (!manifestLink) return
+    const res = await fetch(manifestLink.href)
+    const manifest = await res.json()
+    manifest.icons = [
+      { src: url, sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: url, sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: url, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ]
+    const blob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' })
+    manifestLink.href = URL.createObjectURL(blob)
+  } catch {
+    // манифестът е второстепенен — фавиконът вече е сменен
+  }
+}
+
 function formatDate(iso) {
   try {
     return new Date(iso).toLocaleString('bg-BG', {
@@ -290,19 +315,26 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
-  // Автоматично презареждане на страницата на всеки 30 секунди (само админ панелът е изключен).
+  // Автоматично презареждане на страницата на всеки 30 секунди — превключва се от админ Настройки.
+  // (settings === null означава „още не е заредено“ — изчакваме, за да не презареждаме преди да знаем.)
   useEffect(() => {
+    if (settings === null) return
+    if (settings?.auto_refresh === false) return
     const timer = setInterval(() => {
       if (window.location.hash !== '#admin') window.location.reload()
     }, 30000)
     return () => clearInterval(timer)
-  }, [])
+  }, [settings])
 
   useEffect(() => {
     getSettings()
       .then(setSettings)
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (settings?.app_icon_url) applyAppIcon(settings.app_icon_url)
+  }, [settings?.app_icon_url])
 
   useEffect(() => {
     localStorage.setItem(CART_KEY, JSON.stringify(cart))
@@ -2147,9 +2179,12 @@ function SettingsPanel({ token, settings, onChange }) {
     contact_phone: settings?.contact_phone || '',
     contact_email: settings?.contact_email || '',
     contact_note: settings?.contact_note || '',
+    app_icon_url: settings?.app_icon_url || '',
+    auto_refresh: settings?.auto_refresh !== false,
   })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [uploadingIcon, setUploadingIcon] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -2161,6 +2196,8 @@ function SettingsPanel({ token, settings, onChange }) {
         contact_phone: settings.contact_phone || '',
         contact_email: settings.contact_email || '',
         contact_note: settings.contact_note || '',
+        app_icon_url: settings.app_icon_url || '',
+        auto_refresh: settings.auto_refresh !== false,
       })
     }
   }, [settings])
@@ -2168,6 +2205,22 @@ function SettingsPanel({ token, settings, onChange }) {
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
     setSaved(false)
+  }
+
+  async function handleIconFile(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingIcon(true)
+    setError('')
+    try {
+      const url = await uploadProductImage(token, file)
+      update('app_icon_url', url)
+    } catch {
+      setError('Неуспешно качване на иконата.')
+    } finally {
+      setUploadingIcon(false)
+      e.target.value = ''
+    }
   }
 
   async function submit(e) {
@@ -2199,6 +2252,10 @@ function SettingsPanel({ token, settings, onChange }) {
         Валута
         <input value={form.currency} onChange={(e) => update('currency', e.target.value)} />
       </label>
+      <label className="toggle-row">
+        <input type="checkbox" checked={form.auto_refresh} onChange={(e) => update('auto_refresh', e.target.checked)} />
+        Автоматично обновяване на страницата на всеки 30 сек. (за клиентите)
+      </label>
 
       <h3 className="settings-subtitle">Данни за контакт (виждат се в „Профил“ → „Свържи се с продавача“)</h3>
       <label>
@@ -2217,6 +2274,26 @@ function SettingsPanel({ token, settings, onChange }) {
           placeholder="напр. работно време, Viber, адрес..."
         />
       </label>
+
+      <h3 className="settings-subtitle">Икона на приложението</h3>
+      <div className="app-icon-row">
+        <div className="app-icon-preview">
+          {form.app_icon_url ? <img src={form.app_icon_url} alt="Икона" /> : <span className="emoji">📦</span>}
+        </div>
+        <div>
+          <label className="upload-btn">
+            {uploadingIcon ? 'Качване...' : 'Качи икона от устройство'}
+            <input type="file" accept="image/*" onChange={handleIconFile} disabled={uploadingIcon} hidden />
+          </label>
+          {form.app_icon_url && (
+            <button type="button" className="icon-remove-btn" onClick={() => update('app_icon_url', '')}>
+              Премахни
+            </button>
+          )}
+          <p className="hint">Показва се като икона в браузъра и при инсталиране на приложението (PWA).</p>
+        </div>
+      </div>
+
       {error && <p className="error">{error}</p>}
       {saved && <p className="hint">Запазено.</p>}
       <button className="primary" type="submit" disabled={saving}>
@@ -2531,6 +2608,8 @@ function Style() {
       .contact-label { color: var(--muted); }
       .contact-note { color: var(--muted); white-space: pre-wrap; }
       .settings-subtitle { margin: 8px 0 0; font-size: 1rem; }
+      .toggle-row { flex-direction: row; align-items: center; gap: 8px; }
+      .toggle-row input { width: auto; }
       .contact-form { display: flex; flex-direction: column; gap: 12px; }
       .contact-details { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
       .message-body { margin: 4px 0 0; white-space: pre-wrap; line-height: 1.5; }
@@ -2885,6 +2964,22 @@ function Style() {
         border-radius: 8px;
         border: 1px solid var(--border);
       }
+
+      .app-icon-row { display: flex; align-items: flex-start; gap: 14px; }
+      .app-icon-preview {
+        width: 64px;
+        height: 64px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+      .app-icon-preview img { width: 100%; height: 100%; object-fit: cover; }
+      .icon-remove-btn { display: block; margin-top: 8px; background: none; border: none; color: var(--danger); font-size: 0.85rem; padding: 0; }
 
       .checkout-summary { display: flex; justify-content: space-between; font-size: 1.05rem; }
       .form-actions { display: flex; justify-content: flex-end; gap: 10px; }
