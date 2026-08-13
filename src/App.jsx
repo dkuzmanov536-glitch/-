@@ -40,11 +40,11 @@ async function login(email, password) {
   return data
 }
 
-async function signup(email, password) {
+async function signup(email, password, profile) {
   const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
     method: 'POST',
     headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, data: profile || {} }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error_description || data.msg || 'Неуспешна регистрация.')
@@ -66,11 +66,16 @@ async function refreshSession(refreshToken) {
 const CUSTOMER_KEY = 'customer_session'
 function saveCustomer(data) {
   if (!data?.access_token) return null
+  const meta = data.user?.user_metadata || {}
+  const prev = loadCustomer() || {}
   const session = {
-    id: data.user?.id,
+    id: data.user?.id || prev.id,
     token: data.access_token,
     refresh_token: data.refresh_token,
-    email: data.user?.email,
+    email: data.user?.email || prev.email,
+    first_name: meta.first_name ?? prev.first_name ?? '',
+    last_name: meta.last_name ?? prev.last_name ?? '',
+    phone: meta.phone ?? prev.phone ?? '',
   }
   localStorage.setItem(CUSTOMER_KEY, JSON.stringify(session))
   return session
@@ -786,7 +791,7 @@ function CartPage({ settings, customer, cart, changeQty, removeFromCart, clearCa
       )}
 
       <Modal open={checkoutOpen} onClose={() => setCheckoutOpen(false)} title="Завършване на поръчката">
-        <Checkout cart={cart} total={total} currency={currency} onComplete={handleOrderComplete} customerToken={customer?.token} />
+        <Checkout cart={cart} total={total} currency={currency} onComplete={handleOrderComplete} customer={customer} />
       </Modal>
     </div>
   )
@@ -1014,6 +1019,9 @@ function CustomerAuth({ onAuth }) {
   const [mode, setMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [phone, setPhone] = useState('')
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [loading, setLoading] = useState(false)
@@ -1031,7 +1039,7 @@ function CustomerAuth({ onAuth }) {
     setInfo('')
     try {
       if (mode === 'register') {
-        const data = await signup(email, password)
+        const data = await signup(email, password, { first_name: firstName.trim(), last_name: lastName.trim(), phone: phone.trim() })
         if (data.access_token) {
           onAuth(data)
         } else {
@@ -1060,6 +1068,22 @@ function CustomerAuth({ onAuth }) {
         </button>
       </div>
       <form className="auth-form" onSubmit={submit}>
+        {mode === 'register' && (
+          <>
+            <label>
+              Име
+              <input value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+            </label>
+            <label>
+              Фамилия
+              <input value={lastName} onChange={(e) => setLastName(e.target.value)} required />
+            </label>
+            <label>
+              Телефон
+              <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="напр. 0888 123 456" />
+            </label>
+          </>
+        )}
         <label>
           Имейл
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
@@ -1068,6 +1092,9 @@ function CustomerAuth({ onAuth }) {
           Парола
           <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
         </label>
+        {mode === 'register' && (
+          <p className="hint">Ще ги ползваме, за да предпопълваме данните ти при поръчка.</p>
+        )}
         {error && <p className="error">{error}</p>}
         {info && <p className="hint">{info}</p>}
         <button className="primary" type="submit" disabled={loading}>
@@ -2322,8 +2349,10 @@ function SettingsPanel({ token, settings, onChange }) {
 // Checkout
 // ---------------------------------------------------------------------------
 
-function Checkout({ cart, total, currency, onComplete, customerToken }) {
-  const [form, setForm] = useState({ name: '', phone: '', city: '', address: '', notes: '' })
+function Checkout({ cart, total, currency, onComplete, customer }) {
+  const customerToken = customer?.token
+  const prefilledName = customer ? `${customer.first_name || ''} ${customer.last_name || ''}`.trim() : ''
+  const [form, setForm] = useState({ name: prefilledName, phone: customer?.phone || '', city: '', address: '', notes: '' })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
