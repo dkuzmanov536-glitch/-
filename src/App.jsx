@@ -62,6 +62,17 @@ async function refreshSession(refreshToken) {
   return data
 }
 
+async function updateProfile(token, profile) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    method: 'PUT',
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: profile }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error_description || data.msg || 'Неуспешно запазване на профила.')
+  return data
+}
+
 // Клиентска сесия (различна от админ; пази се, за да остане клиентът логнат).
 const CUSTOMER_KEY = 'customer_session'
 function saveCustomer(data) {
@@ -76,6 +87,23 @@ function saveCustomer(data) {
     first_name: meta.first_name ?? prev.first_name ?? '',
     last_name: meta.last_name ?? prev.last_name ?? '',
     phone: meta.phone ?? prev.phone ?? '',
+    city: meta.city ?? prev.city ?? '',
+    address: meta.address ?? prev.address ?? '',
+  }
+  localStorage.setItem(CUSTOMER_KEY, JSON.stringify(session))
+  return session
+}
+// Записва отговора от updateProfile() (PUT /auth/v1/user) в клиентската сесия, запазвайки token/refresh_token.
+function mergeProfileIntoCustomer(userResponse) {
+  const prev = loadCustomer() || {}
+  const meta = userResponse?.user_metadata || {}
+  const session = {
+    ...prev,
+    first_name: meta.first_name ?? prev.first_name ?? '',
+    last_name: meta.last_name ?? prev.last_name ?? '',
+    phone: meta.phone ?? prev.phone ?? '',
+    city: meta.city ?? prev.city ?? '',
+    address: meta.address ?? prev.address ?? '',
   }
   localStorage.setItem(CUSTOMER_KEY, JSON.stringify(session))
   return session
@@ -439,6 +467,10 @@ export default function App() {
     setCustomer(saveCustomer(data))
   }
 
+  function handleProfileUpdate(session) {
+    setCustomer(session)
+  }
+
   function handleCustomerLogout() {
     clearCustomer()
     setCustomer(null)
@@ -506,7 +538,13 @@ export default function App() {
       ) : route.name === 'cart' ? (
         <CartPage settings={settings} customer={customer} {...cartProps} />
       ) : route.name === 'profile' ? (
-        <ProfilePage settings={settings} customer={customer} onAuth={handleCustomerAuth} onLogout={handleCustomerLogout} />
+        <ProfilePage
+          settings={settings}
+          customer={customer}
+          onAuth={handleCustomerAuth}
+          onLogout={handleCustomerLogout}
+          onProfileUpdate={handleProfileUpdate}
+        />
       ) : route.name === 'product' ? (
         <ProductPage productId={route.id} settings={settings} customer={customer} addToCart={addToCart} {...favProps} />
       ) : (
@@ -801,7 +839,7 @@ function CartPage({ settings, customer, cart, changeQty, removeFromCart, clearCa
 // ProfilePage (Профил — вход и регистрация за клиенти)
 // ---------------------------------------------------------------------------
 
-function ProfilePage({ settings, customer, onAuth, onLogout }) {
+function ProfilePage({ settings, customer, onAuth, onLogout, onProfileUpdate }) {
   if (customer) {
     return (
       <div className="shop">
@@ -817,6 +855,7 @@ function ProfilePage({ settings, customer, onAuth, onLogout }) {
             Изход
           </button>
         </div>
+        <CompleteProfile customer={customer} onUpdate={onProfileUpdate} />
         <MyOrders token={customer.token} currency={settings?.currency} />
         <SellerChat customer={customer} />
         <ContactDetails settings={settings} />
@@ -834,6 +873,94 @@ function ProfilePage({ settings, customer, onAuth, onLogout }) {
       <CustomerAuth onAuth={onAuth} />
       <SellerContact settings={settings} customer={customer} />
     </div>
+  )
+}
+
+// Подкана за клиенти, регистрирали се преди да добавим тези полета (или прескочили ги) —
+// да допълнят име/фамилия/телефон/град/адрес, за да им се предпопълват при поръчка.
+function CompleteProfile({ customer, onUpdate }) {
+  const missing = !customer.first_name || !customer.last_name || !customer.phone || !customer.city || !customer.address
+  const [open, setOpen] = useState(false)
+  const [form, setForm] = useState({
+    first_name: customer.first_name || '',
+    last_name: customer.last_name || '',
+    phone: customer.phone || '',
+    city: customer.city || '',
+    address: customer.address || '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  if (!missing && !open) return null
+
+  function update(field, value) {
+    setForm((f) => ({ ...f, [field]: value }))
+  }
+
+  async function submit(e) {
+    e.preventDefault()
+    setSaving(true)
+    setError('')
+    try {
+      const data = await updateProfile(customer.token, {
+        first_name: form.first_name.trim(),
+        last_name: form.last_name.trim(),
+        phone: form.phone.trim(),
+        city: form.city.trim(),
+        address: form.address.trim(),
+      })
+      onUpdate(mergeProfileIntoCustomer(data))
+      setOpen(false)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <div className="complete-profile-prompt">
+        <p>Допълни данните си (име, телефон, град, адрес), за да се предпопълват автоматично при поръчка.</p>
+        <button className="primary" onClick={() => setOpen(true)}>
+          Допълни профила
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <form className="complete-profile-form" onSubmit={submit}>
+      <label>
+        Име
+        <input value={form.first_name} onChange={(e) => update('first_name', e.target.value)} required />
+      </label>
+      <label>
+        Фамилия
+        <input value={form.last_name} onChange={(e) => update('last_name', e.target.value)} required />
+      </label>
+      <label>
+        Телефон
+        <input type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value)} required />
+      </label>
+      <label>
+        Град
+        <input value={form.city} onChange={(e) => update('city', e.target.value)} required />
+      </label>
+      <label>
+        Адрес
+        <input value={form.address} onChange={(e) => update('address', e.target.value)} required />
+      </label>
+      {error && <p className="error">{error}</p>}
+      <div className="form-actions">
+        <button type="button" onClick={() => setOpen(false)} disabled={saving}>
+          Отказ
+        </button>
+        <button className="primary" type="submit" disabled={saving}>
+          {saving ? 'Запазване...' : 'Запази'}
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -1022,6 +1149,8 @@ function CustomerAuth({ onAuth }) {
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [phone, setPhone] = useState('')
+  const [city, setCity] = useState('')
+  const [address, setAddress] = useState('')
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [loading, setLoading] = useState(false)
@@ -1039,7 +1168,13 @@ function CustomerAuth({ onAuth }) {
     setInfo('')
     try {
       if (mode === 'register') {
-        const data = await signup(email, password, { first_name: firstName.trim(), last_name: lastName.trim(), phone: phone.trim() })
+        const data = await signup(email, password, {
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          phone: phone.trim(),
+          city: city.trim(),
+          address: address.trim(),
+        })
         if (data.access_token) {
           onAuth(data)
         } else {
@@ -1081,6 +1216,14 @@ function CustomerAuth({ onAuth }) {
             <label>
               Телефон
               <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="напр. 0888 123 456" />
+            </label>
+            <label>
+              Град
+              <input value={city} onChange={(e) => setCity(e.target.value)} required />
+            </label>
+            <label>
+              Адрес
+              <input value={address} onChange={(e) => setAddress(e.target.value)} required placeholder="ул., №, ж.к." />
             </label>
           </>
         )}
@@ -2352,7 +2495,13 @@ function SettingsPanel({ token, settings, onChange }) {
 function Checkout({ cart, total, currency, onComplete, customer }) {
   const customerToken = customer?.token
   const prefilledName = customer ? `${customer.first_name || ''} ${customer.last_name || ''}`.trim() : ''
-  const [form, setForm] = useState({ name: prefilledName, phone: customer?.phone || '', city: '', address: '', notes: '' })
+  const [form, setForm] = useState({
+    name: prefilledName,
+    phone: customer?.phone || '',
+    city: customer?.city || '',
+    address: customer?.address || '',
+    notes: '',
+  })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -2638,6 +2787,32 @@ function Style() {
       }
       .profile-email { font-size: 1.1rem; }
       .profile-card .primary { margin-top: 8px; }
+
+      .complete-profile-prompt {
+        max-width: 640px;
+        margin: 20px auto 0;
+        background: #fff7e6;
+        border: 1px solid #f0c674;
+        border-radius: var(--radius);
+        padding: 16px 20px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .complete-profile-prompt p { margin: 0; flex: 1 1 240px; }
+      .complete-profile-form {
+        max-width: 640px;
+        margin: 20px auto 0;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
 
       .seller-contact {
         max-width: 640px;
