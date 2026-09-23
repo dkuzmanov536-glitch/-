@@ -371,6 +371,7 @@ export default function App() {
   })
   const syncedFor = useRef(null)
   const refreshingRef = useRef(false)
+  const [isAdminCustomer, setIsAdminCustomer] = useState(false)
 
   useEffect(() => {
     const onHashChange = () => setRoute(parseRoute())
@@ -442,6 +443,22 @@ export default function App() {
       document.removeEventListener('visibilitychange', onFocus)
     }
   }, [])
+
+  // Гераджето за админ панела се показва само ако логнатият в „Профил“ е и администратор
+  // (вход в Профил и в #admin са един и същ Supabase акаунт — is_admin() проверява точно него).
+  useEffect(() => {
+    if (!customer?.token) {
+      setIsAdminCustomer(false)
+      return
+    }
+    let active = true
+    checkIsAdmin(customer.token)
+      .then((admin) => active && setIsAdminCustomer(!!admin))
+      .catch(() => active && setIsAdminCustomer(false))
+    return () => {
+      active = false
+    }
+  }, [customer?.token])
 
   // При вход: сливаме количката/любимите от акаунта (синхрон между устройства).
   useEffect(() => {
@@ -563,7 +580,7 @@ export default function App() {
       ) : route.name === 'product' ? (
         <ProductPage productId={route.id} settings={settings} customer={customer} addToCart={addToCart} {...favProps} />
       ) : (
-        <Shop settings={settings} addToCart={addToCart} {...favProps} />
+        <Shop settings={settings} addToCart={addToCart} showAdminLink={isAdminCustomer} {...favProps} />
       )}
       <BottomNav active={route.name} cartCount={cartCount} favCount={favorites.length} />
     </>
@@ -657,7 +674,7 @@ function ProductCard({ product: p, currency, onAdd, isFav, onToggleFav }) {
 // Shop / Начало (витрина с продукти)
 // ---------------------------------------------------------------------------
 
-function Shop({ settings, addToCart, favorites, toggleFavorite }) {
+function Shop({ settings, addToCart, favorites, toggleFavorite, showAdminLink }) {
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
   const [category, setCategory] = useState('всички')
@@ -695,9 +712,11 @@ function Shop({ settings, addToCart, favorites, toggleFavorite }) {
         </div>
       </header>
 
-      <a className="admin-fab" href="#admin" title="Администрация" aria-label="Администрация">
-        <Settings size={20} />
-      </a>
+      {showAdminLink && (
+        <a className="admin-fab" href="#admin" title="Администрация" aria-label="Администрация">
+          <Settings size={20} />
+        </a>
+      )}
 
       {categories.length > 1 && (
         <div className="categories">
