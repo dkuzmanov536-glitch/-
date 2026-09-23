@@ -379,7 +379,7 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
-  // Автоматично презареждане на страницата на всеки 30 секунди — превключва се от админ Настройки.
+  // Автоматично презареждане на страницата на всеки 10 секунди — превключва се от админ Настройки.
   // (settings === null означава „още не е заредено“ — изчакваме, за да не презареждаме преди да знаем.)
   useEffect(() => {
     if (settings === null) return
@@ -387,12 +387,12 @@ export default function App() {
     const timer = setInterval(() => {
       if (window.location.hash === '#admin') return
       // Не прекъсваме потребител, който точно пише в поле (форма за поръчка, профил, съобщение...) —
-      // презареждането ще изтрие въведеното. Пропускаме този такт, следващият пак ще опита.
+      // презареждането ще изтрие въведеното. Пропускаме този такт, следващият пак ще опита (10 сек по-късно).
       const active = document.activeElement
       const isTyping = active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)
       if (isTyping) return
       window.location.reload()
-    }, 30000)
+    }, 10000)
     return () => clearInterval(timer)
   }, [settings])
 
@@ -2590,7 +2590,7 @@ function SettingsPanel({ token, settings, onChange }) {
       </label>
       <label className="toggle-row">
         <input type="checkbox" checked={form.auto_refresh} onChange={(e) => update('auto_refresh', e.target.checked)} />
-        Автоматично обновяване на страницата на всеки 30 сек. (за клиентите)
+        Автоматично обновяване на страницата на всеки 10 сек. (за клиентите)
       </label>
 
       <h3 className="settings-subtitle">Данни за контакт (виждат се в „Профил“ → „Свържи се с продавача“)</h3>
