@@ -1403,12 +1403,15 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
           const gallery = Array.isArray(product.images) && product.images.length ? product.images : isUrl(product.image) ? [product.image] : []
           const shown = gallery[mainIdx] || gallery[0]
           const nvars = normVariants(product)
-          const chosen = variant || (nvars[0] && nvars[0].name) || ''
-          // При "по заявка" продукти няма склад — правят се при поръчка, наличността не важи.
-          const chosenStock = !product.custom && nvars.length ? variantStock(product, chosen) : null
-          const variantOut = !product.custom && nvars.length > 0 && chosenStock === 0
+          // По подразбиране предпочитаме наличен дизайн пред изчерпан.
+          const defaultVariant = nvars.find((v) => v.stock !== 0) || nvars[0]
+          const chosen = variant || (defaultVariant && defaultVariant.name) || ''
+          // null (празно поле в админа) = без следене, важи и за "по заявка" продукти.
+          // Изрично зададена бройка (вкл. 0) се спазва навсякъде, дори продуктът да е "по заявка".
+          const chosenStock = nvars.length ? variantStock(product, chosen) : null
+          const variantOut = nvars.length > 0 && chosenStock === 0
           const canAdd =
-            (product.custom ? note.trim().length > 0 : nvars.length ? !variantOut : product.stock > 0) &&
+            (product.custom ? note.trim().length > 0 && !variantOut : nvars.length ? !variantOut : product.stock > 0) &&
             (nvars.length === 0 || !!chosen)
           return (
             <div className="product-page">
@@ -1466,7 +1469,7 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
                     <span className="variant-pick-label">Дизайн / цвят:</span>
                     <div className="variant-options">
                       {nvars.map((v) => {
-                        const out = !product.custom && v.stock === 0
+                        const out = v.stock === 0
                         return (
                           <button
                             key={v.name}
@@ -2253,7 +2256,7 @@ function ProductsAdmin({ token }) {
                 <td>{p.name}</td>
                 <td>{p.category}</td>
                 <td>{money(p.price)}</td>
-                <td>{p.stock}</td>
+                <td>{hasVariants(p) ? 'по дизайн' : p.stock}</td>
                 <td className="row-actions">
                   <button className="icon-btn" onClick={() => setEditing(p)}>
                     <Pencil size={16} />
@@ -2486,10 +2489,14 @@ function ProductForm({ product, token, onSave, onCancel }) {
         </button>
         Поръчка по заявка (клиентът пише какво иска да му направиш)
       </label>
-      <label>
-        Наличност
-        <input type="number" min="0" value={form.stock} onChange={(e) => update('stock', e.target.value)} />
-      </label>
+      {form.variants.length > 0 ? (
+        <p className="hint">Наличността се следи по дизайн по-горе — това поле не се ползва, докато има дизайни.</p>
+      ) : (
+        <label>
+          Наличност
+          <input type="number" min="0" value={form.stock} onChange={(e) => update('stock', e.target.value)} />
+        </label>
+      )}
       <label>
         Описание
         <textarea value={form.description} onChange={(e) => update('description', e.target.value)} />
