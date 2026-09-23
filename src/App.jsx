@@ -21,7 +21,15 @@ async function rest(path, { method = 'GET', token, body, headers = {} } = {}) {
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(text || `Грешка ${res.status}`)
+    // PostgREST връща грешките като JSON — вадим четимото съобщение.
+    let message = text
+    try {
+      const parsed = JSON.parse(text)
+      message = parsed.message || parsed.error_description || parsed.msg || text
+    } catch {
+      // не е JSON — ползваме суровия текст
+    }
+    throw new Error(message || `Грешка ${res.status}`)
   }
   if (res.status === 204) return null
   const contentType = res.headers.get('content-type') || ''
@@ -305,6 +313,13 @@ const deleteReview = (token, id) => rest(`reviews?id=eq.${id}`, { method: 'DELET
 const markMessage = (token, id, handled) =>
   rest(`messages?id=eq.${id}`, { method: 'PATCH', token, body: { handled }, headers: { Prefer: 'return=representation' } }).then((r) => r[0])
 const deleteMessage = (token, id) => rest(`messages?id=eq.${id}`, { method: 'DELETE', token })
+
+// Управление на потребители (само за админ — правата се проверяват в самите SQL функции)
+const checkIsAdmin = (token) => rest('rpc/is_admin', { method: 'POST', token, body: {} })
+const adminListUsers = (token) => rest('rpc/admin_list_users', { method: 'POST', token, body: {} })
+const adminDeleteUser = (token, id) => rest('rpc/admin_delete_user', { method: 'POST', token, body: { target: id } })
+const adminSetAdmin = (token, id, makeAdmin) =>
+  rest('rpc/admin_set_admin', { method: 'POST', token, body: { target: id, make_admin: makeAdmin } })
 
 const STATUSES = ['нова', 'изпратена', 'приключена', 'отказана']
 const CART_KEY = 'cart'
@@ -1653,6 +1668,13 @@ function AuthGate({ onLogin }) {
     setError('')
     try {
       const data = await login(email, password)
+      // Пускаме в панела само администратори (данните и без това са защитени от RLS,
+      // но иначе клиент би влязъл и видял празни таблици, без да разбира защо).
+      const admin = await checkIsAdmin(data.access_token)
+      if (!admin) {
+        setError('Този профил няма администраторски права.')
+        return
+      }
       onLogin(data)
     } catch (err) {
       setError(err.message)
@@ -1727,6 +1749,9 @@ function Admin({ session, settings, onSettingsChange, onLogout }) {
         <button className={tab === 'messages' ? 'active' : ''} onClick={() => setTab('messages')}>
           Съобщения
         </button>
+        <button className={tab === 'users' ? 'active' : ''} onClick={() => setTab('users')}>
+          Потребители
+        </button>
         <button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>
           Настройки
         </button>
@@ -1736,6 +1761,7 @@ function Admin({ session, settings, onSettingsChange, onLogout }) {
         {tab === 'orders' && <Orders token={session.token} />}
         {tab === 'products' && <ProductsAdmin token={session.token} />}
         {tab === 'messages' && <Messages token={session.token} />}
+        {tab === 'users' && <UsersAdmin token={session.token} />}
         {tab === 'settings' && <SettingsPanel token={session.token} settings={settings} onChange={onSettingsChange} />}
       </main>
     </div>
@@ -2007,6 +2033,106 @@ function Messages({ token }) {
                 </a>
               )
             )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// UsersAdmin (админ — профили: преглед, админ права, изтриване)
+// ---------------------------------------------------------------------------
+
+function UsersAdmin({ token }) {
+  const [users, setUsers] = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(null)
+
+  function load() {
+    return adminListUsers(token)
+      .then((u) => setUsers(u || []))
+      .catch((err) => setError(err.message || 'Неуспешно зареждане на потребителите.'))
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+
+  async function toggleAdmin(u) {
+    const makeAdmin = !u.is_admin
+    const question = makeAdmin
+      ? `Да направя ли ${u.email} администратор? Ще получи пълен достъп до админ панела.`
+      : `Да отнема ли администраторските права на ${u.email}?`
+    if (!window.confirm(question)) return
+    setBusy(u.id)
+    setError('')
+    try {
+      await adminSetAdmin(token, u.id, makeAdmin)
+      await load()
+    } catch (err) {
+      setError(err.message || 'Неуспешна промяна.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function remove(u) {
+    if (!window.confirm(`Да изтрия ли профила на ${u.email}? Действието е необратимо.\n\nПоръчките му остават в „Поръчки“, но вече няма да са свързани с профил.`)) return
+    setBusy(u.id)
+    setError('')
+    try {
+      await adminDeleteUser(token, u.id)
+      await load()
+    } catch (err) {
+      setError(err.message || 'Неуспешно изтриване.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (users === null && !error) return <p className="hint">Зареждане...</p>
+
+  return (
+    <div className="users-admin">
+      {error && <p className="error">{error}</p>}
+      {users && users.length === 0 && <p className="hint">Още няма регистрирани потребители.</p>}
+      {(users || []).map((u) => {
+        const fullName = `${u.first_name || ''} ${u.last_name || ''}`.trim()
+        return (
+          <div className="user-card" key={u.id}>
+            <div className="user-card-main">
+              <div>
+                <strong>{fullName || u.email}</strong>
+                {u.is_owner ? (
+                  <span className="user-badge owner">Собственик</span>
+                ) : u.is_admin ? (
+                  <span className="user-badge admin">Администратор</span>
+                ) : null}
+                {fullName && <div className="hint">{u.email}</div>}
+              </div>
+              <span className="order-date">Регистриран: {formatDate(u.created_at)}</span>
+            </div>
+
+            <div className="user-details">
+              {u.phone && <span>📞 {u.phone}</span>}
+              {(u.city || u.address) && <span>📍 {[u.city, u.address].filter(Boolean).join(', ')}</span>}
+              <span>🛒 Поръчки: {u.orders_count}</span>
+              {u.last_sign_in_at && <span>Последен вход: {formatDate(u.last_sign_in_at)}</span>}
+            </div>
+
+            {!u.is_owner && (
+              <div className="user-actions">
+                <button onClick={() => toggleAdmin(u)} disabled={busy === u.id}>
+                  {u.is_admin ? 'Отнеми админ права' : 'Направи администратор'}
+                </button>
+                <button className="order-delete" onClick={() => remove(u)} disabled={busy === u.id} title="Изтрий профила" aria-label="Изтрий профила">
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            )}
+            {u.is_owner && <p className="hint">Това е твоят профил на собственик — не може да бъде изтрит или понижен.</p>}
           </div>
         )
       })}
@@ -2835,6 +2961,40 @@ function Style() {
       .message-handled { opacity: 0.6; }
       .message-check { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: var(--muted); font-weight: 500; }
       .message-check input { width: auto; }
+
+      .users-admin { display: flex; flex-direction: column; gap: 12px; }
+      .user-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .user-card-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .user-badge {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        vertical-align: middle;
+      }
+      .user-badge.owner { background: var(--accent); color: #fff; }
+      .user-badge.admin { background: #7c3aed; color: #fff; }
+      .user-details { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 0.85rem; }
+      .user-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+      .user-actions button:not(.order-delete) {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 7px 14px;
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
+      .user-actions button:not(.order-delete):hover { border-color: var(--accent); color: var(--accent); }
       .message-reply {
         display: inline-flex;
         align-items: center;
