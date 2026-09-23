@@ -385,7 +385,13 @@ export default function App() {
     if (settings === null) return
     if (settings?.auto_refresh === false) return
     const timer = setInterval(() => {
-      if (window.location.hash !== '#admin') window.location.reload()
+      if (window.location.hash === '#admin') return
+      // Не прекъсваме потребител, който точно пише в поле (форма за поръчка, профил, съобщение...) —
+      // презареждането ще изтрие въведеното. Пропускаме този такт, следващият пак ще опита.
+      const active = document.activeElement
+      const isTyping = active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)
+      if (isTyping) return
+      window.location.reload()
     }, 30000)
     return () => clearInterval(timer)
   }, [settings])
