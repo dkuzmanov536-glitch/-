@@ -1404,8 +1404,9 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
           const shown = gallery[mainIdx] || gallery[0]
           const nvars = normVariants(product)
           const chosen = variant || (nvars[0] && nvars[0].name) || ''
-          const chosenStock = nvars.length ? variantStock(product, chosen) : null // null = без следене
-          const variantOut = nvars.length > 0 && chosenStock === 0
+          // При "по заявка" продукти няма склад — правят се при поръчка, наличността не важи.
+          const chosenStock = !product.custom && nvars.length ? variantStock(product, chosen) : null
+          const variantOut = !product.custom && nvars.length > 0 && chosenStock === 0
           const canAdd =
             (product.custom ? note.trim().length > 0 : nvars.length ? !variantOut : product.stock > 0) &&
             (nvars.length === 0 || !!chosen)
@@ -1465,7 +1466,7 @@ function ProductPage({ productId, settings, customer, addToCart, favorites, togg
                     <span className="variant-pick-label">Дизайн / цвят:</span>
                     <div className="variant-options">
                       {nvars.map((v) => {
-                        const out = v.stock === 0
+                        const out = !product.custom && v.stock === 0
                         return (
                           <button
                             key={v.name}
@@ -2304,7 +2305,8 @@ function ProductForm({ product, token, onSave, onCancel }) {
       setVariantStockInput('')
       return
     }
-    const stock = variantStockInput === '' ? 0 : Number(variantStockInput) || 0
+    // Празно поле = без следене на наличност (null), не 0 — иначе новият дизайн излиза "изчерпан".
+    const stock = variantStockInput === '' ? null : Number(variantStockInput) || 0
     setForm((f) => ({ ...f, variants: [...f.variants, { name, stock }] }))
     setVariantInput('')
     setVariantStockInput('')
@@ -2313,7 +2315,8 @@ function ProductForm({ product, token, onSave, onCancel }) {
     setForm((f) => ({ ...f, variants: f.variants.filter((v) => v.name !== name) }))
   }
   function setVariantStockValue(name, stock) {
-    setForm((f) => ({ ...f, variants: f.variants.map((v) => (v.name === name ? { ...v, stock: stock === '' ? 0 : Number(stock) || 0 } : v)) }))
+    // Празно поле = без следене на наличност (null), не 0 — иначе продуктът излиза "изчерпан".
+    setForm((f) => ({ ...f, variants: f.variants.map((v) => (v.name === name ? { ...v, stock: stock === '' ? null : Number(stock) || 0 } : v)) }))
   }
 
   function update(field, value) {
@@ -2459,9 +2462,10 @@ function ProductForm({ product, token, onSave, onCancel }) {
               <input
                 type="number"
                 min="0"
-                value={v.stock ?? 0}
+                value={v.stock ?? ''}
                 onChange={(e) => setVariantStockValue(v.name, e.target.value)}
-                title="Наличност за този дизайн"
+                placeholder="без лимит"
+                title="Наличност за този дизайн (празно = без следене на наличност)"
               />
               <span className="variant-row-unit">бр.</span>
               <button type="button" className="icon-btn" onClick={() => removeVariant(v.name)} aria-label="Премахни">
