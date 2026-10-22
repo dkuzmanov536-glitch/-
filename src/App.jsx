@@ -257,6 +257,7 @@ function parseRoute() {
   if (hash === '#favorites') return { name: 'favorites' }
   if (hash === '#cart') return { name: 'cart' }
   if (hash === '#profile') return { name: 'profile' }
+  if (hash === '#terms' || hash === '#privacy' || hash === '#returns') return { name: 'legal', kind: hash.slice(1) }
   const m = hash.match(/^#product\/(.+)$/)
   if (m) return { name: 'product', id: decodeURIComponent(m[1]) }
   return { name: 'shop' }
@@ -321,7 +322,35 @@ const adminDeleteUser = (token, id) => rest('rpc/admin_delete_user', { method: '
 const adminSetAdmin = (token, id, makeAdmin) =>
   rest('rpc/admin_set_admin', { method: 'POST', token, body: { target: id, make_admin: makeAdmin } })
 
+// Връщане на поръчка (клиентът заявява, админът обработва)
+const getReturns = (token) => rest('return_requests?select=*&order=created_at.desc', { token })
+const createReturn = (token, orderId, reason) =>
+  rest('return_requests', {
+    method: 'POST',
+    token,
+    body: { order_id: orderId, reason: reason || null },
+    headers: { Prefer: 'return=representation' },
+  }).then((r) => r[0])
+const updateReturn = (token, id, patch) =>
+  rest(`return_requests?id=eq.${id}`, { method: 'PATCH', token, body: patch, headers: { Prefer: 'return=representation' } }).then((r) => r[0])
+
 const STATUSES = ['нова', 'изпратена', 'приключена', 'отказана']
+const RETURN_STATUSES = ['заявено', 'одобрено', 'получено', 'възстановено', 'отхвърлено']
+const DELIVERY_LABELS = { econt: 'Еконт — до офис', speedy: 'Спиди — до офис', address: 'Куриер — до адрес' }
+// Автоматично съобщение в чата на клиента при смяна на статуса (само за поръчки с профил).
+const STATUS_MESSAGES = {
+  изпратена: 'Поръчката ти е изпратена. Куриерът ще се свърже с теб за доставката.',
+  приключена:
+    'Поръчката ти е приключена. Благодарим ти! Ако нещо не ти харесва, можеш да заявиш безплатно връщане от „Профил“ → „Моите поръчки“.',
+  отказана: 'Поръчката ти е отказана.',
+}
+const RETURN_MESSAGES = {
+  одобрено:
+    'Заявката ти за връщане е одобрена. Върни пратката с куриер — разходите за връщане са за наша сметка. Пиши ни тук, ако ти трябват подробности.',
+  получено: 'Получихме върнатата пратка. Ще възстановим сумата.',
+  възстановено: 'Сумата по поръчката е възстановена.',
+  отхвърлено: 'Заявката ти за връщане е отхвърлена. Пиши ни тук, ако имаш въпроси.',
+}
 const CART_KEY = 'cart'
 const FAV_KEY = 'favorites'
 // Formspree endpoint за имейл известия при ново съобщение (напр. 'https://formspree.io/f/xxxxxxx').
@@ -372,6 +401,9 @@ export default function App() {
   const syncedFor = useRef(null)
   const refreshingRef = useRef(false)
   const [isAdminCustomer, setIsAdminCustomer] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+  const routeRef = useRef(route.name)
+  routeRef.current = route.name
 
   useEffect(() => {
     const onHashChange = () => setRoute(parseRoute())
@@ -449,6 +481,47 @@ export default function App() {
       document.removeEventListener('visibilitychange', onFocus)
     }
   }, [])
+
+  // Непрочетени съобщения от продавача → червена значка на „Профил“. Сравняваме по сървърното време на
+  // последното съобщение (не по часовника на клиента); отварянето на „Профил“ ги маркира като прочетени.
+  useEffect(() => {
+    if (!customer?.token || !customer?.id) {
+      setUnreadCount(0)
+      return
+    }
+    const key = `seen_admin_msgs_${customer.id}`
+    let active = true
+    const check = () =>
+      getThread(customer.token)
+        .then((msgs) => {
+          if (!active) return
+          const admin = (msgs || []).filter((m) => m.sender === 'admin')
+          const latest = admin.reduce((max, m) => (m.created_at > max ? m.created_at : max), '')
+          let seen = ''
+          try {
+            seen = localStorage.getItem(key) || ''
+          } catch {
+            // localStorage може да е недостъпен — броим всичко като непрочетено
+          }
+          if (routeRef.current === 'profile') {
+            try {
+              if (latest) localStorage.setItem(key, latest)
+            } catch {
+              // нищо — значката просто ще се покаже пак
+            }
+            setUnreadCount(0)
+          } else {
+            setUnreadCount(admin.filter((m) => m.created_at > seen).length)
+          }
+        })
+        .catch(() => {})
+    check()
+    const timer = setInterval(check, 60000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [customer?.id, customer?.token, route.name])
 
   // Гераджето за админ панела се показва само ако логнатият в „Профил“ е и администратор
   // (вход в Профил и в #admin са един и същ Supabase акаунт — is_admin() проверява точно него).
@@ -583,12 +656,14 @@ export default function App() {
           onLogout={handleCustomerLogout}
           onProfileUpdate={handleProfileUpdate}
         />
+      ) : route.name === 'legal' ? (
+        <LegalPage kind={route.kind} settings={settings} />
       ) : route.name === 'product' ? (
         <ProductPage productId={route.id} settings={settings} customer={customer} addToCart={addToCart} {...favProps} />
       ) : (
         <Shop settings={settings} addToCart={addToCart} showAdminLink={isAdminCustomer} {...favProps} />
       )}
-      <BottomNav active={route.name} cartCount={cartCount} favCount={favorites.length} />
+      <BottomNav active={route.name} cartCount={cartCount} favCount={favorites.length} unreadCount={unreadCount} />
     </>
   )
 }
@@ -597,20 +672,20 @@ export default function App() {
 // BottomNav (долна навигация)
 // ---------------------------------------------------------------------------
 
-function BottomNav({ active, cartCount, favCount }) {
+function BottomNav({ active, cartCount, favCount, unreadCount }) {
   const items = [
     { key: 'shop', href: '#', label: 'Начало', icon: Home },
     { key: 'favorites', href: '#favorites', label: 'Любими', icon: Heart, badge: favCount },
     { key: 'cart', href: '#cart', label: 'Количка', icon: ShoppingCart, badge: cartCount },
-    { key: 'profile', href: '#profile', label: 'Профил', icon: User },
+    { key: 'profile', href: '#profile', label: 'Профил', icon: User, badge: unreadCount, unread: true },
   ]
   return (
     <nav className="bottom-nav">
-      {items.map(({ key, href, label, icon: Icon, badge }) => (
+      {items.map(({ key, href, label, icon: Icon, badge, unread }) => (
         <a key={key} href={href} className={active === key ? 'bottom-nav-item active' : 'bottom-nav-item'}>
           <span className="bottom-nav-icon">
             <Icon size={22} />
-            {badge > 0 && <span className="bottom-nav-badge">{badge}</span>}
+            {badge > 0 && <span className={unread ? 'bottom-nav-badge unread' : 'bottom-nav-badge'}>{badge}</span>}
           </span>
           {label}
         </a>
@@ -752,6 +827,7 @@ function Shop({ settings, addToCart, favorites, toggleFavorite, showAdminLink })
           ))}
         </div>
       )}
+      <LegalLinks />
     </div>
   )
 }
@@ -869,8 +945,9 @@ function CartPage({ settings, customer, cart, changeQty, removeFromCart, clearCa
       )}
 
       <Modal open={checkoutOpen} onClose={() => setCheckoutOpen(false)} title="Завършване на поръчката">
-        <Checkout cart={cart} total={total} currency={currency} onComplete={handleOrderComplete} customer={customer} />
+        <Checkout cart={cart} total={total} currency={currency} onComplete={handleOrderComplete} customer={customer} settings={settings} />
       </Modal>
+      <LegalLinks />
     </div>
   )
 }
@@ -899,6 +976,7 @@ function ProfilePage({ settings, customer, onAuth, onLogout, onProfileUpdate }) 
         <MyOrders token={customer.token} currency={settings?.currency} />
         <SellerChat customer={customer} />
         <ContactDetails settings={settings} />
+        <LegalLinks />
       </div>
     )
   }
@@ -912,6 +990,7 @@ function ProfilePage({ settings, customer, onAuth, onLogout, onProfileUpdate }) 
       </header>
       <CustomerAuth onAuth={onAuth} />
       <SellerContact settings={settings} customer={customer} />
+      <LegalLinks />
     </div>
   )
 }
@@ -1001,6 +1080,243 @@ function CompleteProfile({ customer, onUpdate }) {
         </button>
       </div>
     </form>
+  )
+}
+
+function LegalLinks() {
+  return (
+    <nav className="legal-links">
+      <a href="#terms">Общи условия</a>
+      <span>·</span>
+      <a href="#privacy">Поверителност</a>
+      <span>·</span>
+      <a href="#returns">Връщане и отказ</a>
+    </nav>
+  )
+}
+
+// Общи условия, поверителност и връщане. Данните на търговеца и цените на доставката идват от Настройки.
+function LegalPage({ kind, settings }) {
+  const s = settings || {}
+  const shop = s.shop_name || 'Магазинът'
+  const currency = s.currency || '€'
+  const sellerLines = [s.seller_name, s.seller_address, s.seller_eik ? `ЕИК/Булстат: ${s.seller_eik}` : null].filter(Boolean)
+  const contactLine = [s.contact_phone && `тел. ${s.contact_phone}`, s.contact_email && `имейл ${s.contact_email}`].filter(Boolean).join(', ')
+  const freeOver = s.free_shipping_over != null ? Number(s.free_shipping_over) : 0
+
+  const sellerBlock =
+    sellerLines.length || contactLine ? (
+      <p>
+        {sellerLines.map((l, i) => (
+          <span key={i}>
+            {l}
+            <br />
+          </span>
+        ))}
+        {contactLine}
+      </p>
+    ) : null
+
+  const docs = {
+    terms: {
+      title: 'Общи условия',
+      sections: [
+        [
+          '1. Продавач',
+          <>
+            <p>Онлайн магазинът „{shop}“ се управлява от:</p>
+            {sellerBlock}
+          </>,
+        ],
+        [
+          '2. Поръчки и сключване на договор',
+          <p>
+            Поръчката се прави през сайта — попълваш данните за доставка и потвърждаваш поръчката. Договорът се счита за сключен, когато
+            приемем поръчката. Данните ти (име, телефон, град и адрес или офис за доставка) трябва да са верни, за да можем да доставим пратката.
+          </p>,
+        ],
+        [
+          '3. Цени и плащане',
+          <p>
+            Всички цени са в {currency}. Плащането е с наложен платеж при получаване на пратката. Цената на доставката се показва преди да
+            потвърдиш поръчката и се добавя към общата сума.
+          </p>,
+        ],
+        [
+          '4. Доставка',
+          <>
+            <p>
+              Доставяме с Еконт, Спиди или куриер до адрес — по твой избор. Цена на доставката: до офис {money(s.shipping_price_office ?? 5, currency)}, до
+              адрес {money(s.shipping_price_address ?? 7, currency)}.
+              {freeOver > 0 ? ` Доставката е безплатна при поръчка над ${money(freeOver, currency)}.` : ''}
+            </p>
+            <p>
+              Срокът за доставка зависи от наличността на продукта и от куриера. Продуктите „По заявка“ се изработват след поръчката и срокът се
+              уточнява с теб.
+            </p>
+          </>,
+        ],
+        [
+          '5. Отказ от поръчка преди изпращане',
+          <p>
+            Можеш да откажеш поръчката без причина и без разходи, докато не е изпратена — от „Профил“ → „Моите поръчки“ (бутон „Откажи
+            поръчката“) или като се свържеш с нас.
+          </p>,
+        ],
+        [
+          '6. Връщане',
+          <p>
+            Ако продуктът не ти хареса, можеш да го върнеш безплатно. Подробностите са в <a href="#returns">условията за връщане</a>.
+          </p>,
+        ],
+        [
+          '7. Продукти по заявка',
+          <p>
+            Продуктите, отбелязани като „По заявка“, се изработват специално за теб по описанието, което си дал — моля, опиши го възможно най-точно.
+            Условията за връщане важат и за тях.
+          </p>,
+        ],
+        [
+          '8. Рекламации и гаранция',
+          <p>
+            Ако получиш повреден продукт или такъв, който не отговаря на поръчката, свържи се с нас веднага. Прилагат се правата ти по закона,
+            включително законовата гаранция за съответствие на стоката.
+          </p>,
+        ],
+        [
+          '9. Лични данни',
+          <p>
+            Личните ти данни се обработват съгласно <a href="#privacy">Политиката за поверителност</a>.
+          </p>,
+        ],
+        [
+          '10. Спорове',
+          <p>
+            Стремим се да решаваме всеки въпрос доброволно. Можеш да се обърнеш и към Комисията за защита на потребителите (kzp.bg) или към
+            компетентния съд.
+          </p>,
+        ],
+        [
+          '11. Промени',
+          <p>Можем да променяме тези условия. За всяка поръчка важат условията, действащи към момента, в който е направена.</p>,
+        ],
+      ],
+    },
+    privacy: {
+      title: 'Политика за поверителност',
+      sections: [
+        [
+          '1. Администратор на лични данни',
+          <>
+            <p>Администратор на личните данни е:</p>
+            {sellerBlock || <p>{shop}</p>}
+          </>,
+        ],
+        [
+          '2. Какви данни събираме',
+          <ul>
+            <li>при поръчка: име, телефон, град, адрес или офис за доставка, бележка към поръчката;</li>
+            <li>при регистрация: имейл, парола (пази се криптирана), име, телефон, град и адрес;</li>
+            <li>история на поръчките, съобщения към нас, отзиви за продукти;</li>
+            <li>съдържание на количката и любимите, за да са налични на всичките ти устройства, когато си влязъл в профила си.</li>
+          </ul>,
+        ],
+        [
+          '3. Защо ги ползваме',
+          <p>
+            За да приемем и доставим поръчката ти, да отговорим на съобщенията ти, да изпълним законови задължения (например счетоводни) и
+            да управляваме профила ти. Не ги ползваме за реклама и не ги продаваме.
+          </p>,
+        ],
+        [
+          '4. С кого ги споделяме',
+          <ul>
+            <li>куриерски фирми (Еконт, Спиди) — име, телефон и адрес, за да получиш пратката;</li>
+            <li>Supabase — съхранение на данните (сървър в Европейския съюз);</li>
+            <li>GitHub Pages — хостинг на сайта;</li>
+            <li>Formspree — известяване на продавача за нова поръчка или съобщение (съдържа данните от тях).</li>
+          </ul>,
+        ],
+        [
+          '5. Колко време ги пазим',
+          <p>Колкото е нужно за изпълнение на поръчката и за срока, изискван от закона. Данните на профила пазим, докато не го изтриеш.</p>,
+        ],
+        [
+          '6. Твоите права',
+          <p>
+            Можеш да поискаш достъп, поправка, изтриване, ограничаване или пренос на данните си и да възразиш срещу обработването им. Пиши ни на
+            контактите по-долу. Имаш право и на жалба до Комисията за защита на личните данни (cpdp.bg).
+          </p>,
+        ],
+        [
+          '7. Бисквитки и локално съхранение',
+          <p>
+            Сайтът не използва рекламни бисквитки и не следи поведението ти. Пази в браузъра ти само необходимото — количка, любими и входа в
+            профила, за да работят.
+          </p>,
+        ],
+        ['8. Контакти', <p>{contactLine || sellerLines.join(', ') || shop}</p>],
+      ],
+    },
+    returns: {
+      title: 'Връщане и отказ',
+      sections: [
+        [
+          '1. Безплатно връщане',
+          <p>
+            Ако продуктът не ти хареса, можеш да го върнеш в рамките на 14 дни от получаването. Разходите за връщането са за наша сметка.
+          </p>,
+        ],
+        [
+          '2. Как да върнеш',
+          <ol>
+            <li>
+              Влез в „Профил“ → „Моите поръчки“ и натисни „Заяви безплатно връщане“ при съответната поръчка (можеш да посочиш причина). Ако нямаш
+              профил, свържи се с нас{contactLine ? ` — ${contactLine}` : ''}.
+            </li>
+            <li>Ще ти отговорим с указания как да изпратиш пратката.</li>
+            <li>Изпрати продукта в състоянието, в което си го получил.</li>
+            <li>След като получим пратката, ти възстановяваме сумата.</li>
+          </ol>,
+        ],
+        [
+          '3. Възстановяване на сумата',
+          <p>
+            Връщаме стойността на продукта и стандартната доставка до 14 дни след като получим върнатата пратка. Плащането е наложен платеж,
+            затова сумата се възстановява по банкова сметка, която ни посочиш, или по друг уговорен начин.
+          </p>,
+        ],
+        [
+          '4. Продукти по заявка',
+          <p>Връщането важи и за продуктите, изработени по заявка. Ако продуктът е повреден или не отговаря на заявката, заменяме го или връщаме парите — за наша сметка.</p>,
+        ],
+        [
+          '5. Отказ преди изпращане',
+          <p>
+            Ако поръчката още не е изпратена, откажи я от „Профил“ → „Моите поръчки“ с бутона „Откажи поръчката“ — без да връщаш пратка.
+          </p>,
+        ],
+      ],
+    },
+  }
+
+  const doc = docs[kind] || docs.terms
+  return (
+    <div className="shop legal-page">
+      <header className="shop-header">
+        <a className="back-link" href="#">
+          ← Към магазина
+        </a>
+      </header>
+      <h1>{doc.title}</h1>
+      {doc.sections.map(([heading, body]) => (
+        <section key={heading}>
+          <h2>{heading}</h2>
+          {body}
+        </section>
+      ))}
+      <LegalLinks />
+    </div>
   )
 }
 
@@ -1294,18 +1610,40 @@ function CustomerAuth({ onAuth }) {
 
 function MyOrders({ token, currency }) {
   const [orders, setOrders] = useState(null)
+  const [returns, setReturns] = useState({})
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(null)
+  const [returnFor, setReturnFor] = useState(null)
+  const [reason, setReason] = useState('')
 
   useEffect(() => {
     let active = true
     getMyOrders(token)
       .then((o) => active && setOrders(o || []))
       .catch(() => active && setError('Неуспешно зареждане на поръчките.'))
+    getReturns(token)
+      .then((rs) => active && setReturns(Object.fromEntries((rs || []).map((r) => [r.order_id, r]))))
+      .catch(() => {})
     return () => {
       active = false
     }
   }, [token])
+
+  async function requestReturn(e, orderId) {
+    e.preventDefault()
+    setBusy(orderId)
+    setError('')
+    try {
+      const created = await createReturn(token, orderId, reason.trim())
+      setReturns((m) => ({ ...m, [orderId]: created }))
+      setReturnFor(null)
+      setReason('')
+    } catch {
+      setError('Заявката за връщане не беше изпратена. Опитай пак или ни пиши в чата.')
+    } finally {
+      setBusy(null)
+    }
+  }
 
   async function cancel(id) {
     if (!window.confirm('Сигурни ли сте, че искате да откажете тази поръчка?')) return
@@ -1345,6 +1683,12 @@ function MyOrders({ token, currency }) {
                 </li>
               ))}
             </ul>
+            {o.delivery_method && (
+              <p className="hint">
+                Доставка: {DELIVERY_LABELS[o.delivery_method] || o.delivery_method} ·{' '}
+                {Number(o.shipping_cost) > 0 ? money(o.shipping_cost, o.currency || currency) : 'безплатна'}
+              </p>
+            )}
             <div className="order-card-footer">
               <strong>Общо: {money(o.total, o.currency || currency)}</strong>
               {o.status === 'нова' && (
@@ -1353,6 +1697,43 @@ function MyOrders({ token, currency }) {
                 </button>
               )}
             </div>
+            {o.status === 'нова' && <p className="hint">Можеш да откажеш поръчката, докато не е изпратена.</p>}
+
+            {(o.status === 'изпратена' || o.status === 'приключена') &&
+              (returns[o.id] ? (
+                <p className="return-status">
+                  Връщане: <strong>{returns[o.id].status}</strong>
+                </p>
+              ) : returnFor === o.id ? (
+                <form className="return-form" onSubmit={(e) => requestReturn(e, o.id)}>
+                  <textarea
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="Защо връщаш поръчката? (по желание)"
+                    maxLength={1000}
+                  />
+                  <div className="form-actions">
+                    <button type="button" onClick={() => setReturnFor(null)} disabled={busy === o.id}>
+                      Отказ
+                    </button>
+                    <button className="primary" type="submit" disabled={busy === o.id}>
+                      {busy === o.id ? 'Изпращане...' : 'Заяви връщане'}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="return-offer">
+                  <p className="hint">Не ти хареса? Връщането е безплатно — виж <a href="#returns">условията</a>.</p>
+                  <button
+                    onClick={() => {
+                      setReturnFor(o.id)
+                      setReason('')
+                    }}
+                  >
+                    Заяви безплатно връщане
+                  </button>
+                </div>
+              ))}
           </div>
         ))
       )}
@@ -1807,11 +2188,20 @@ function statusClass(status) {
 
 function Orders({ token }) {
   const [orders, setOrders] = useState([])
+  const [returns, setReturns] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [drafts, setDrafts] = useState({})
   const [sent, setSent] = useState({})
   const [sendingMsg, setSendingMsg] = useState(null)
+
+  const indexReturns = (list) => Object.fromEntries((list || []).map((r) => [r.order_id, r]))
+
+  // Автоматично съобщение в чата на клиента (само ако поръчката е с профил).
+  function notifyCustomer(o, text) {
+    if (!o.user_id || !text) return
+    createMessage({ user_id: o.user_id, sender: 'admin', body: `Относно поръчка от ${formatDate(o.created_at)}:\n${text}` }, token).catch(() => {})
+  }
 
   async function messageCustomer(o) {
     const text = (drafts[o.id] || '').trim()
@@ -1835,6 +2225,9 @@ function Orders({ token }) {
       getOrders(token)
         .then(setOrders)
         .catch(() => {})
+      getReturns(token)
+        .then((rs) => setReturns(indexReturns(rs)))
+        .catch(() => {})
     }
     window.addEventListener('focus', refresh)
     document.addEventListener('visibilitychange', refresh)
@@ -1849,6 +2242,9 @@ function Orders({ token }) {
     setError('')
     try {
       setOrders(await getOrders(token))
+      getReturns(token)
+        .then((rs) => setReturns(indexReturns(rs)))
+        .catch(() => {})
     } catch {
       setError('Неуспешно зареждане на поръчките.')
     } finally {
@@ -1856,9 +2252,16 @@ function Orders({ token }) {
     }
   }
 
-  async function changeStatus(id, status) {
-    const updated = await updateOrderStatus(token, id, status)
-    setOrders((os) => os.map((o) => (o.id === id ? updated : o)))
+  async function changeStatus(o, status) {
+    const updated = await updateOrderStatus(token, o.id, status)
+    setOrders((os) => os.map((x) => (x.id === o.id ? updated : x)))
+    notifyCustomer(o, STATUS_MESSAGES[status])
+  }
+
+  async function changeReturnStatus(o, r, status) {
+    const updated = await updateReturn(token, r.id, { status })
+    setReturns((m) => ({ ...m, [o.id]: updated }))
+    notifyCustomer(o, RETURN_MESSAGES[status])
   }
 
   async function remove(id) {
@@ -1894,10 +2297,32 @@ function Orders({ token }) {
             ))}
           </ul>
           {o.notes && <p className="hint">Бележка: {o.notes}</p>}
+          {o.delivery_method && (
+            <p className="hint">
+              Доставка: {DELIVERY_LABELS[o.delivery_method] || o.delivery_method} ·{' '}
+              {Number(o.shipping_cost) > 0 ? money(o.shipping_cost, o.currency) : 'безплатна'}
+            </p>
+          )}
+          {returns[o.id] && (
+            <div className="return-box">
+              <div className="return-box-head">
+                <strong>Заявено връщане</strong>
+                <span className="order-date">{formatDate(returns[o.id].created_at)}</span>
+              </div>
+              {returns[o.id].reason && <p className="return-reason">{returns[o.id].reason}</p>}
+              <select value={returns[o.id].status} onChange={(e) => changeReturnStatus(o, returns[o.id], e.target.value)}>
+                {RETURN_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="order-card-footer">
             <strong>Общо: {money(o.total, o.currency)}</strong>
             <div className="order-card-actions">
-              <select value={o.status} onChange={(e) => changeStatus(o.id, e.target.value)}>
+              <select value={o.status} onChange={(e) => changeStatus(o, e.target.value)}>
                 {STATUSES.map((s) => (
                   <option key={s} value={s}>
                     {s}
@@ -2518,35 +2943,35 @@ function ProductForm({ product, token, onSave, onCancel }) {
 // SettingsPanel
 // ---------------------------------------------------------------------------
 
+// Числата стоят като низове във формата; при запис се превръщат (празно = 0, а за „безплатна над“ = няма праг).
+function settingsToForm(s) {
+  return {
+    shop_name: s?.shop_name || '',
+    tagline: s?.tagline || '',
+    currency: s?.currency || '€',
+    contact_phone: s?.contact_phone || '',
+    contact_email: s?.contact_email || '',
+    contact_note: s?.contact_note || '',
+    app_icon_url: s?.app_icon_url || '',
+    auto_refresh: s?.auto_refresh !== false,
+    shipping_price_office: s?.shipping_price_office ?? 5,
+    shipping_price_address: s?.shipping_price_address ?? 7,
+    free_shipping_over: s?.free_shipping_over ?? '',
+    seller_name: s?.seller_name || '',
+    seller_address: s?.seller_address || '',
+    seller_eik: s?.seller_eik || '',
+  }
+}
+
 function SettingsPanel({ token, settings, onChange }) {
-  const [form, setForm] = useState({
-    shop_name: settings?.shop_name || '',
-    tagline: settings?.tagline || '',
-    currency: settings?.currency || '€',
-    contact_phone: settings?.contact_phone || '',
-    contact_email: settings?.contact_email || '',
-    contact_note: settings?.contact_note || '',
-    app_icon_url: settings?.app_icon_url || '',
-    auto_refresh: settings?.auto_refresh !== false,
-  })
+  const [form, setForm] = useState(() => settingsToForm(settings))
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [uploadingIcon, setUploadingIcon] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (settings) {
-      setForm({
-        shop_name: settings.shop_name || '',
-        tagline: settings.tagline || '',
-        currency: settings.currency || '€',
-        contact_phone: settings.contact_phone || '',
-        contact_email: settings.contact_email || '',
-        contact_note: settings.contact_note || '',
-        app_icon_url: settings.app_icon_url || '',
-        auto_refresh: settings.auto_refresh !== false,
-      })
-    }
+    if (settings) setForm(settingsToForm(settings))
   }, [settings])
 
   function update(field, value) {
@@ -2575,7 +3000,16 @@ function SettingsPanel({ token, settings, onChange }) {
     setSaving(true)
     setError('')
     try {
-      const updated = await updateSettings(token, form)
+      const payload = {
+        ...form,
+        shipping_price_office: Number(form.shipping_price_office) || 0,
+        shipping_price_address: Number(form.shipping_price_address) || 0,
+        free_shipping_over: form.free_shipping_over === '' ? null : Number(form.free_shipping_over) || null,
+        seller_name: form.seller_name.trim() || null,
+        seller_address: form.seller_address.trim() || null,
+        seller_eik: form.seller_eik.trim() || null,
+      }
+      const updated = await updateSettings(token, payload)
       onChange(updated)
       setSaved(true)
     } catch {
@@ -2602,6 +3036,37 @@ function SettingsPanel({ token, settings, onChange }) {
       <label className="toggle-row">
         <input type="checkbox" checked={form.auto_refresh} onChange={(e) => update('auto_refresh', e.target.checked)} />
         Автоматично обновяване на страницата на всеки 10 сек. (за клиентите)
+      </label>
+
+      <h3 className="settings-subtitle">Доставка (цени за клиента при поръчка)</h3>
+      <label>
+        Цена на доставка до офис на Еконт/Спиди
+        <input type="number" min="0" step="0.01" value={form.shipping_price_office} onChange={(e) => update('shipping_price_office', e.target.value)} />
+      </label>
+      <label>
+        Цена на доставка до адрес (куриер)
+        <input type="number" min="0" step="0.01" value={form.shipping_price_address} onChange={(e) => update('shipping_price_address', e.target.value)} />
+      </label>
+      <label>
+        Безплатна доставка при поръчка над (празно = няма)
+        <input type="number" min="0" step="0.01" value={form.free_shipping_over} onChange={(e) => update('free_shipping_over', e.target.value)} placeholder="напр. 50" />
+      </label>
+      <p className="hint">
+        Клиентът избира Еконт, Спиди или адрес и вписва офиса. Товарителницата си я правиш ръчно в Еконт/Спиди — сайтът не я създава и не смята цената им автоматично.
+      </p>
+
+      <h3 className="settings-subtitle">Данни на търговеца (показват се в „Общи условия“ и „Поверителност“)</h3>
+      <label>
+        Име на фирмата / ЕТ / физическо лице
+        <input value={form.seller_name} onChange={(e) => update('seller_name', e.target.value)} />
+      </label>
+      <label>
+        Адрес на управление
+        <input value={form.seller_address} onChange={(e) => update('seller_address', e.target.value)} />
+      </label>
+      <label>
+        ЕИК / Булстат (ако имаш)
+        <input value={form.seller_eik} onChange={(e) => update('seller_eik', e.target.value)} />
       </label>
 
       <h3 className="settings-subtitle">Данни за контакт (виждат се в „Профил“ → „Свържи се с продавача“)</h3>
@@ -2654,7 +3119,7 @@ function SettingsPanel({ token, settings, onChange }) {
 // Checkout
 // ---------------------------------------------------------------------------
 
-function Checkout({ cart, total, currency, onComplete, customer }) {
+function Checkout({ cart, total, currency, onComplete, customer, settings }) {
   const customerToken = customer?.token
   const prefilledName = customer ? `${customer.first_name || ''} ${customer.last_name || ''}`.trim() : ''
   const [form, setForm] = useState({
@@ -2662,10 +3127,22 @@ function Checkout({ cart, total, currency, onComplete, customer }) {
     phone: customer?.phone || '',
     city: customer?.city || '',
     address: customer?.address || '',
+    point: '',
     notes: '',
   })
+  const [delivery, setDelivery] = useState('address')
+  const [agreed, setAgreed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  const isOffice = delivery !== 'address'
+  const officePrice = Number(settings?.shipping_price_office ?? 5)
+  const addressPrice = Number(settings?.shipping_price_address ?? 7)
+  const freeOver = settings?.free_shipping_over != null ? Number(settings.free_shipping_over) : 0
+  const freeShipping = freeOver > 0 && total >= freeOver
+  const shippingFor = (method) => (freeShipping ? 0 : method === 'address' ? addressPrice : officePrice)
+  const shipping = shippingFor(delivery)
+  const grandTotal = total + shipping
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
@@ -2673,8 +3150,12 @@ function Checkout({ cart, total, currency, onComplete, customer }) {
 
   async function submit(e) {
     e.preventDefault()
-    if (!form.name || !form.phone || !form.city || !form.address) {
+    if (!form.name || !form.phone || !form.city || !(isOffice ? form.point : form.address)) {
       setError('Моля, попълнете всички задължителни полета.')
+      return
+    }
+    if (!agreed) {
+      setError('Трябва да приемеш Общите условия, за да продължиш.')
       return
     }
     setSubmitting(true)
@@ -2685,10 +3166,13 @@ function Checkout({ cart, total, currency, onComplete, customer }) {
           customer_name: form.name,
           customer_phone: form.phone,
           customer_city: form.city,
-          customer_address: form.address,
+          customer_address: isOffice ? `${DELIVERY_LABELS[delivery]}: ${form.point}` : form.address,
+          delivery_method: delivery,
+          delivery_point: isOffice ? form.point : null,
+          shipping_cost: shipping,
           notes: form.notes || null,
           items: cart.map((i) => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, variant: i.variant || null, note: i.note || null })),
-          total,
+          total: grandTotal,
           currency,
           payment: 'Наложен платеж',
         },
@@ -2701,9 +3185,11 @@ function Checkout({ cart, total, currency, onComplete, customer }) {
         subject: 'Нова поръчка от магазина',
         name: form.name,
         email: '',
-        body: `НОВА ПОРЪЧКА\nКлиент: ${form.name}\nТелефон: ${form.phone}\nАдрес: ${form.city}, ${form.address}\n${
+        body: `НОВА ПОРЪЧКА\nКлиент: ${form.name}\nТелефон: ${form.phone}\nГрад: ${form.city}\nДоставка: ${DELIVERY_LABELS[delivery]} — ${
+          isOffice ? form.point : form.address
+        } (${shipping === 0 ? 'безплатна' : money(shipping, currency)})\n${
           form.notes ? `Бележка: ${form.notes}\n` : ''
-        }\n${summary}\n\nОбщо: ${money(total, currency)}\nПлащане: Наложен платеж`,
+        }\n${summary}\n\nОбщо: ${money(grandTotal, currency)}\nПлащане: Наложен платеж`,
       })
       onComplete()
     } catch (err) {
@@ -2724,23 +3210,78 @@ function Checkout({ cart, total, currency, onComplete, customer }) {
         Телефон*
         <input value={form.phone} onChange={(e) => update('phone', e.target.value)} required />
       </label>
+      <fieldset className="delivery-options">
+        <legend>Доставка</legend>
+        {['econt', 'speedy', 'address'].map((key) => (
+          <label key={key} className={delivery === key ? 'delivery-opt active' : 'delivery-opt'}>
+            <input type="radio" name="delivery" value={key} checked={delivery === key} onChange={() => setDelivery(key)} />
+            <span>{DELIVERY_LABELS[key]}</span>
+            <strong>{shippingFor(key) === 0 ? 'Безплатна' : money(shippingFor(key), currency)}</strong>
+          </label>
+        ))}
+        {freeOver > 0 && !freeShipping && (
+          <p className="hint">
+            Безплатна доставка при поръчка над {money(freeOver, currency)} (остават {money(freeOver - total, currency)}).
+          </p>
+        )}
+      </fieldset>
       <label>
         Град*
         <input value={form.city} onChange={(e) => update('city', e.target.value)} required />
       </label>
-      <label>
-        Адрес*
-        <input value={form.address} onChange={(e) => update('address', e.target.value)} required />
-      </label>
+      {isOffice ? (
+        <label>
+          Офис на {delivery === 'econt' ? 'Еконт' : 'Спиди'}* (име или адрес на офиса)
+          <input
+            value={form.point}
+            onChange={(e) => update('point', e.target.value)}
+            placeholder="напр. Офис Младост 1, бул. Александър Малинов 51"
+            required
+          />
+        </label>
+      ) : (
+        <label>
+          Адрес*
+          <input value={form.address} onChange={(e) => update('address', e.target.value)} required />
+        </label>
+      )}
       <label>
         Бележка
         <textarea value={form.notes} onChange={(e) => update('notes', e.target.value)} />
       </label>
+      <div className="checkout-lines">
+        <div>
+          <span>Продукти</span>
+          <span>{money(total, currency)}</span>
+        </div>
+        <div>
+          <span>Доставка</span>
+          <span>{shipping === 0 ? 'Безплатна' : money(shipping, currency)}</span>
+        </div>
+      </div>
       <div className="checkout-summary">
         <span>Общо за плащане:</span>
-        <strong>{money(total, currency)}</strong>
+        <strong>{money(grandTotal, currency)}</strong>
       </div>
       <p className="hint">Плащане: наложен платеж при доставка.</p>
+      <label className="terms-check">
+        <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} required />
+        <span>
+          Прочетох и приемам{' '}
+          <a href="#terms" target="_blank" rel="noopener noreferrer">
+            Общите условия
+          </a>
+          ,{' '}
+          <a href="#privacy" target="_blank" rel="noopener noreferrer">
+            Политиката за поверителност
+          </a>{' '}
+          и{' '}
+          <a href="#returns" target="_blank" rel="noopener noreferrer">
+            условията за връщане
+          </a>
+          .
+        </span>
+      </label>
       {error && <p className="error">{error}</p>}
       <button className="primary" type="submit" disabled={submitting || cart.length === 0}>
         {submitting ? 'Изпращане...' : 'Потвърди поръчката'}
@@ -3397,6 +3938,35 @@ function Style() {
       .icon-remove-btn { display: block; margin-top: 8px; background: none; border: none; color: var(--danger); font-size: 0.85rem; padding: 0; }
 
       .checkout-summary { display: flex; justify-content: space-between; font-size: 1.05rem; }
+      .bottom-nav-badge.unread { background: #dc2626; }
+
+      .delivery-options { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+      .delivery-options legend { padding: 0 6px; font-weight: 600; font-size: 0.9rem; }
+      .delivery-opt { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer; font-weight: 500; }
+      .delivery-opt.active { border-color: var(--accent); background: #f1f7f2; }
+      .delivery-opt input { width: auto; margin: 0; }
+      .delivery-opt span { flex: 1; }
+      .checkout-lines { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 0.92rem; }
+      .checkout-lines div { display: flex; justify-content: space-between; }
+      .terms-check { display: flex; align-items: flex-start; gap: 8px; font-size: 0.88rem; font-weight: 400; }
+      .terms-check input { width: auto; margin-top: 3px; }
+
+      .return-box { margin-top: 10px; padding: 10px 12px; border: 1px solid #f0c674; background: #fff7e6; border-radius: 10px; display: flex; flex-direction: column; gap: 8px; }
+      .return-box-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+      .return-reason { margin: 0; white-space: pre-wrap; }
+      .return-offer { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+      .return-offer p { margin: 0; }
+      .return-offer button { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 14px; font-weight: 600; font-size: 0.85rem; }
+      .return-form { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+      .return-status { margin: 10px 0 0; padding: 8px 12px; background: #fff7e6; border: 1px solid #f0c674; border-radius: 10px; }
+
+      .legal-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 28px 0 8px; font-size: 0.85rem; color: var(--muted); }
+      .legal-links a { color: var(--muted); text-decoration: underline; }
+      .legal-page { max-width: 760px; }
+      .legal-page h1 { margin: 8px 0 18px; }
+      .legal-page h2 { font-size: 1.05rem; margin: 22px 0 6px; }
+      .legal-page p, .legal-page li { line-height: 1.6; }
+      .legal-page ul, .legal-page ol { padding-left: 22px; }
       .form-actions { display: flex; justify-content: flex-end; gap: 10px; }
       .form-actions button:not(.primary) {
         background: var(--surface);
